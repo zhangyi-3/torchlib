@@ -47,7 +47,8 @@ class FullyConnected(nn.Module):
 
 
 class LinearChain(nn.Module):
-  def __init__(self, ninputs, noutputs, ksize=3, width=32, depth=3, pad=True):
+  def __init__(self, ninputs, noutputs, ksize=3, width=32, depth=3,
+               pad=True, batchnorm=False):
     super(LinearChain, self).__init__()
     if pad:
       padding = ksize//2
@@ -59,11 +60,11 @@ class LinearChain(nn.Module):
         _in = ninputs
       else:
         _in = width
-      conv = nn.Conv2d(_in, width, ksize, padding=padding, bias=True)
-      conv.bias.data.zero_()
-      nn.init.xavier_uniform(conv.weight.data, nn.init.calculate_gain('relu'))
-      layers.append(conv)
-      layers.append(nn.ReLU(inplace=True))
+      # conv = nn.Conv2d(_in, width, ksize, padding=padding, bias=True)
+      # conv.bias.data.zero_()
+      # nn.init.xavier_uniform(conv.weight.data, nn.init.calculate_gain('relu'))
+      layers.append(ConvBNRelu(_in, ksize, width, batchnorm=batchnorm))
+      # layers.append(nn.ReLU(inplace=True))
 
     if depth > 1:
       _in = width
@@ -102,7 +103,7 @@ class ConvBNRelu(nn.Module):
 
 class SkipAutoencoder(nn.Module):
   def __init__(self, ninputs, noutputs, ksize=3, width=32, depth=3, max_width=512, 
-               batchnorm=True):
+               batchnorm=True, grow_width=False):
     super(SkipAutoencoder, self).__init__()
     ds_layers = []
     widths = []
@@ -110,19 +111,30 @@ class SkipAutoencoder(nn.Module):
     self.upsampler = nn.Upsample(scale_factor=2, mode='bilinear')
 
     # ds_layers.append(SkipAutoencoderDownsample(ninputs, ksize, w, batchnorm=False))
+    widths = []
     prev_w = ninputs
     for d in range(depth):
-      ds_layers.append(ConvBNRelu(prev_w, ksize, width, batchnorm=batchnorm, stride=2))
-      prev_w = width
-      # TODO: no bn for layer 1?
+      if grow_width:
+        _out = min(width*(2**d), max_width)
+      else:
+        _out = width
+      ds_layers.append(ConvBNRelu(prev_w, ksize, _out, batchnorm=batchnorm, stride=2))
+      widths.append(_out)
+      prev_w = _out
 
     us_layers = []
     for d in range(depth-1, -1, -1):
+      prev_w = widths[d]
       if d == 0:
-        w_input = width+ninputs
+        # w_input = width+ninputs
+        next_w = ninputs
+        _out = width
       else:
-        w_input = width*2
-      us_layers.append(ConvBNRelu(w_input, ksize, width, batchnorm=batchnorm))
+        next_w = widths[d-1]
+        _out = next_w
+        # w_input = width*2
+      _in = prev_w + next_w
+      us_layers.append(ConvBNRelu(_in, ksize, _out, batchnorm=batchnorm))
 
     self.ds_layers = nn.ModuleList(ds_layers)
     self.us_layers = nn.ModuleList(us_layers)
@@ -140,8 +152,9 @@ class SkipAutoencoder(nn.Module):
 
     x = data.pop()
     for l in self.us_layers:
-      x = self.upsampler(x)
       prev = data.pop()
+      upsampler = nn.Upsample(size=prev.shape[-2:], mode='bilinear')
+      x = upsampler(x)
       x = th.cat((x, prev), 1)
       x = l(x)
 

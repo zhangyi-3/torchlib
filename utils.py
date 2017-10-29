@@ -8,6 +8,9 @@ log = logging.getLogger(__name__)
 def make_variable(d, cuda=True):
   ret = {}
   for k in d.keys():
+    if "Tensor" not in type(d[k]).__name__:
+      ret[k] = d[k]
+      continue
     if cuda:
       ret[k] = Variable(d[k].cuda())
     else:
