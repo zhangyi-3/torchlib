@@ -15,7 +15,7 @@ class ScalarVisualizer(Visualizer):
     self.value = []
     self.plot_update = None
 
-  def update(self, t, v):
+  def update(self, t, v, legend=None):
     self.time.append(t)
     self.value.append(v)
 
@@ -31,6 +31,7 @@ class ScalarVisualizer(Visualizer):
           'title': "{} over time".format(self.name),
           'xlabel': 'epoch',
           'ylabel': self.name,
+          'legend': legend
           },
         win=self.name)
 
