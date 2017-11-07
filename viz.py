@@ -36,6 +36,15 @@ class ScalarVisualizer(Visualizer):
         win=self.name)
 
 
+class TextVisualizer(Visualizer):
+  def __init__(self, name, port=8097, env="main"):
+    super(TextVisualizer, self).__init__(port=port, env=env)
+    self.name = name
+
+  def update(self, text):
+    self.vis.text(text, win=self.name)
+
+
 class ImageVisualizer(Visualizer):
   def __init__(self, name, port=8097, env="main"):
     super(ImageVisualizer, self).__init__(port=port, env=env)
