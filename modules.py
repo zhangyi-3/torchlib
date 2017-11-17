@@ -34,7 +34,11 @@ class FullyConnected(nn.Module):
         layers.append(fc)
       layers.append(nn.ReLU(inplace=True))
 
-    fc = nn.Linear(width, noutputs)
+    if depth > 1:
+      _in = width
+    else:
+      _in = ninputs
+    fc = nn.Linear(_in, noutputs)
     fc.bias.data.zero_()
     nn.init.xavier_uniform(fc.weight.data)
     layers.append(fc)
@@ -47,7 +51,7 @@ class FullyConnected(nn.Module):
 
 
 class LinearChain(nn.Module):
-  def __init__(self, ninputs, noutputs, ksize=3, width=32, depth=3,
+  def __init__(self, ninputs, noutputs, ksize=3, width=32, depth=3, stride=1,
                pad=True, batchnorm=False):
     super(LinearChain, self).__init__()
     if pad:
@@ -60,11 +64,10 @@ class LinearChain(nn.Module):
         _in = ninputs
       else:
         _in = width
-      # conv = nn.Conv2d(_in, width, ksize, padding=padding, bias=True)
-      # conv.bias.data.zero_()
-      # nn.init.xavier_uniform(conv.weight.data, nn.init.calculate_gain('relu'))
-      layers.append(ConvBNRelu(_in, ksize, width, batchnorm=batchnorm))
-      # layers.append(nn.ReLU(inplace=True))
+      layers.append(
+          ConvBNRelu(
+            _in, ksize, width, batchnorm=batchnorm, padding=padding, 
+            stride=stride))
 
     if depth > 1:
       _in = width
@@ -82,16 +85,16 @@ class LinearChain(nn.Module):
 
 
 class ConvBNRelu(nn.Module):
-  def __init__(self, ninputs, ksize, noutputs, batchnorm=True, stride=1):
+  def __init__(self, ninputs, ksize, noutputs, batchnorm=True, stride=1, padding=0):
     super(ConvBNRelu, self).__init__()
     if batchnorm:
-      conv = nn.Conv2d(ninputs, noutputs, ksize, stride=stride, padding=ksize//2, bias=False)
+      conv = nn.Conv2d(ninputs, noutputs, ksize, stride=stride, padding=padding, bias=False)
       bn = nn.BatchNorm2d(noutputs)
       bn.bias.data.zero_()
       bn.weight.data.fill_(1.0)
       self.layer = nn.Sequential(conv, bn, nn.ReLU(inplace=True))
     else:
-      conv = nn.Conv2d(ninputs, noutputs, ksize, stride=stride, padding=ksize//2)
+      conv = nn.Conv2d(ninputs, noutputs, ksize, stride=stride, padding=padding)
       conv.bias.data.zero_()
       self.layer = nn.Sequential(conv, nn.ReLU(inplace=True))
 
