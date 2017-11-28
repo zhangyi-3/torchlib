@@ -45,6 +45,20 @@ class TextVisualizer(Visualizer):
     self.vis.text(text, win=self.name)
 
 
+class HistogramVisualizer(Visualizer):
+  def __init__(self, name, port=8097, env="main"):
+    super(HistogramVisualizer, self).__init__(port=port, env=env)
+    self.name = name
+
+  def update(self, data, numbins=30, caption=None):
+    self.vis.histogram(
+        data, 
+        opts={'numbins': numbins,
+              'caption':caption,
+              'title': "{}".format(self.name)},
+        win=self.name)
+
+
 class ImageVisualizer(Visualizer):
   def __init__(self, name, port=8097, env="main"):
     super(ImageVisualizer, self).__init__(port=port, env=env)

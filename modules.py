@@ -20,9 +20,9 @@ class FullyConnected(nn.Module):
         _in = width
       if batchnorm:
         fc = nn.Linear(_in, width, bias=False)
-        fc.bias.data.zero_()
         nn.init.xavier_uniform(fc.weight.data, nn.init.calculate_gain('relu'))
-        bn = nn.BatchNorm2d(width)
+        raise ValueError("check batchnorm correctness in FC torchlib")
+        bn = nn.BatchNorm1d(width)
         bn.bias.data.zero_()
         bn.weight.data.fill_(1.0)
         layers.append(fc)
@@ -78,10 +78,17 @@ class LinearChain(nn.Module):
     nn.init.xavier_uniform(conv.weight.data)
     layers.append(conv)
 
-    self.net = nn.Sequential(*layers)
+    for im, m in enumerate(layers):
+      if im == len(layers)-1:
+        name = "prediction"
+      else:
+        name = "layer_{}".format(im)
+      self.add_module(name, m)
 
   def forward(self, x):
-    return self.net(x)
+    for m in self.children():
+      x = m(x)
+    return x
 
 
 class ConvBNRelu(nn.Module):
@@ -121,7 +128,8 @@ class SkipAutoencoder(nn.Module):
         _out = min(width*(2**d), max_width)
       else:
         _out = width
-      ds_layers.append(ConvBNRelu(prev_w, ksize, _out, batchnorm=batchnorm, stride=2))
+      ds_layers.append(ConvBNRelu(prev_w, ksize, _out, batchnorm=batchnorm,
+                                  stride=2, padding=ksize//2))
       widths.append(_out)
       prev_w = _out
 
@@ -137,7 +145,8 @@ class SkipAutoencoder(nn.Module):
         _out = next_w
         # w_input = width*2
       _in = prev_w + next_w
-      us_layers.append(ConvBNRelu(_in, ksize, _out, batchnorm=batchnorm))
+      us_layers.append(ConvBNRelu(_in, ksize, _out, batchnorm=batchnorm, 
+                                  padding=ksize//2))
 
     self.ds_layers = nn.ModuleList(ds_layers)
     self.us_layers = nn.ModuleList(us_layers)
