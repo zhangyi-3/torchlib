@@ -114,3 +114,19 @@ class ScatterVisualizer(Visualizer):
           'markercolor': color,
           },
         win=self.name)
+
+
+class GraphVisualizer(Visualizer):
+  def __init__(self, name, port=8097, env="main"):
+    super(GraphVisualizer, self).__init__(port=port, env=env)
+    self.name = name
+
+  def update(self, t, v, legend=None):
+    self.vis.line(
+        X=np.array(t),
+        Y=np.array(v),
+        opts={
+          'title': "{}".format(self.name),
+          'legend': legend
+          },
+        win=self.name)
