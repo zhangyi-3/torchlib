@@ -120,7 +120,6 @@ class SkipAutoencoder(nn.Module):
 
     self.upsampler = nn.Upsample(scale_factor=2, mode='bilinear')
 
-    # ds_layers.append(SkipAutoencoderDownsample(ninputs, ksize, w, batchnorm=False))
     widths = []
     prev_w = ninputs
     for d in range(depth):
