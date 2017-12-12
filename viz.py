@@ -31,7 +31,6 @@ class ScalarVisualizer(Visualizer):
           'title': "{} over time".format(self.name),
           'xlabel': 'epoch',
           'ylabel': self.name,
-          'legend': legend
           },
         win=self.name)
 
