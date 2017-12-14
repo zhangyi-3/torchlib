@@ -8,12 +8,13 @@ class Visualizer(object):
 
 
 class ScalarVisualizer(Visualizer):
-  def __init__(self, name, port=8097, env="main"):
+  def __init__(self, name, port=8097, env="main", opts=None):
     super(ScalarVisualizer, self).__init__(port=port, env=env)
     self.name = name
     self.time = []
     self.value = []
     self.plot_update = None
+    self.opts = opts
 
   def update(self, t, v, legend=None):
     self.time.append(t)
@@ -23,16 +24,19 @@ class ScalarVisualizer(Visualizer):
     if self.vis.win_exists(self.name, env=self.vis.env):
       plot_update = True
 
+    opts = self.opts
+    if "xlabel" not in opts.keys():
+      opts["xlabel"] = "epoch"
+    if "ylabel" not in opts.keys():
+      opts["ylabel"] = self.name
+    if "title" not in opts.keys():
+      opts["title"] = "{} over time".format(self.name)
+
     self.vis.line(
         X=np.array(self.time),
         Y=np.array(self.value),
         update=plot_update,
-        opts={
-          'title': "{} over time".format(self.name),
-          'xlabel': 'epoch',
-          'ylabel': self.name,
-          'legend': legend
-          },
+        opts=opts,
         win=self.name)
 
 
