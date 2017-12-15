@@ -25,12 +25,13 @@ class ScalarVisualizer(Visualizer):
       plot_update = True
 
     opts = self.opts
-    if "xlabel" not in opts.keys():
-      opts["xlabel"] = "epoch"
-    if "ylabel" not in opts.keys():
-      opts["ylabel"] = self.name
-    if "title" not in opts.keys():
-      opts["title"] = "{} over time".format(self.name)
+    if opts is not None:
+      if "xlabel" not in opts.keys():
+        opts["xlabel"] = "epoch"
+      if "ylabel" not in opts.keys():
+        opts["ylabel"] = self.name
+      if "title" not in opts.keys():
+        opts["title"] = "{} over time".format(self.name)
 
     self.vis.line(
         X=np.array(self.time),
