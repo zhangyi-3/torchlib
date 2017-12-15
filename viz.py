@@ -8,37 +8,64 @@ class Visualizer(object):
 
 
 class ScalarVisualizer(Visualizer):
-  def __init__(self, name, port=8097, env="main", opts=None):
+  def __init__(self, name, ntraces=None, port=8097, env="main", opts=None):
     super(ScalarVisualizer, self).__init__(port=port, env=env)
     self.name = name
     self.time = []
     self.value = []
-    self.plot_update = None
+    self.traces = set()
+    self.is_first = True
+
+    if opts is None:
+      opts = {}
+
+    if ntraces is not None:
+      if "legend" in opts.keys():
+          raise ValueError("cannot specify ntraces when legend is provided, we'll infer it.")
+
+    if ntraces is None:
+      ntraces = 1
+
+    if "legend" in opts.keys():
+      ntraces = len(opts["legend"])
+
+    if "xlabel" not in opts.keys():
+      opts["xlabel"] = "epoch"
+    if "ylabel" not in opts.keys():
+      opts["ylabel"] = self.name
+    if "title" not in opts.keys():
+      opts["title"] = "{} over time".format(self.name)
     self.opts = opts
 
-  def update(self, t, v, legend=None):
-    self.time.append(t)
-    self.value.append(v)
-
-    plot_update = None
-    if self.vis.win_exists(self.name, env=self.vis.env):
-      plot_update = True
-
-    opts = self.opts
-    if opts is not None:
-      if "xlabel" not in opts.keys():
-        opts["xlabel"] = "epoch"
-      if "ylabel" not in opts.keys():
-        opts["ylabel"] = self.name
-      if "title" not in opts.keys():
-        opts["title"] = "{} over time".format(self.name)
+    if ntraces == 1:
+      y = np.nan*np.ones((1,))
+    else:
+      y = np.nan*np.ones((1, ntraces))
 
     self.vis.line(
-        X=np.array(self.time),
-        Y=np.array(self.value),
-        update=plot_update,
-        opts=opts,
-        win=self.name)
+        y,
+        X=np.array([0]),
+        win=self.name,
+        name=name,
+        opts=self.opts,
+        )
+
+  def update(self, t, v, name=None):
+    update = 'append'
+
+    t = np.array(t)
+    v = np.array(v)
+
+    t = np.expand_dims(t, 0)
+    v = np.expand_dims(v, 0)
+
+    self.vis.line(
+        v,
+        X=t,
+        update=update,
+        win=self.name,
+        name=name,
+        )
 
 
 class TextVisualizer(Visualizer):
