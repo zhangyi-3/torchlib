@@ -4,6 +4,7 @@ from torch.autograd import Variable
 
 log = logging.getLogger(__name__)
 
+import os
 
 def make_variable(d, cuda=True):
   ret = {}
@@ -43,18 +44,17 @@ class Checkpointer(object):
 
     self.old_files = []
 
-
   def save_checkpoint(self, epoch, filename, is_best=False):
     th.save({ 
         'epoch': epoch + 1,
         'state_dict': self.model.state_dict(),
         'optimizer' : self.optimizer.state_dict(),
-        }, filename)
+        }, os.path.join(self.directory, filename))
     if is_best:
       shutil.copyfile(filename, os.path.join(self.directory, 'best.pth.tar'))
 
   def on_epoch_end(self, epoch, logs=None):
-    filename = '{:03d}'.format(epoch+1)
+    filename = 'epoch_{:03d}.pth.tar'.format(epoch+1)
     if self.verbose > 0:
       print('\nEpoch %i: saving model to %s' % (epoch+1, file))
     self.save_checkpoint(epoch, filename)
