@@ -53,6 +53,12 @@ class Checkpointer(object):
     if is_best:
       shutil.copyfile(filename, os.path.join(self.directory, 'best.pth.tar'))
 
+  def load_checkpoint(self, filename):
+    chkpt = th.load(filename)
+    self.model.load_state_dict(chkpt["state_dict"])
+    self.optimizer.load_state_dict(chkpt["optimizer"])
+    return chkpt["epoch"]
+
   def on_epoch_end(self, epoch, logs=None):
     filename = 'epoch_{:03d}.pth.tar'.format(epoch+1)
     if self.verbose > 0:
