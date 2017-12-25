@@ -35,7 +35,7 @@ class Checkpointer(object):
   def __init__(self, directory, model, optimizer, 
                max_save=5,
                interval=-1,
-               extra_params=None,
+               meta_params=None,
                filename='ckpt.pth.tar', verbose=False):
     """
     If interval > 0, checkpoints every "interval seconds".
@@ -49,7 +49,7 @@ class Checkpointer(object):
     self.directory = directory
     self.filename = filename
     self.verbose = verbose
-    self.extra_params = extra_params
+    self.meta_params = meta_params
     self.interval = interval
 
     if self.interval > 0:
@@ -75,7 +75,10 @@ class Checkpointer(object):
     mf = sorted(zip(mtimes, all_checkpoints))
     for m, f in reversed(mf):
       try:
-        e = self.load_checkpoint(os.path.join(self.directory, f))
+        if meta_params_only:
+          e = self.load_meta_params(os.path.join(self.directory, f))
+        else:
+          e = self.load_checkpoint(os.path.join(self.directory, f))
         return f, e
       except:
         print "could not load latest checkpoint {}, moving on.".format(f)
@@ -86,7 +89,7 @@ class Checkpointer(object):
         'epoch': epoch + 1,
         'state_dict': self.model.state_dict(),
         'optimizer' : self.optimizer.state_dict(),
-        'extra_params': self.extra_params,
+        'meta_params': self.meta_params,
         }, os.path.join(self.directory, filename))
     if is_best:
       shutil.copyfile(filename, os.path.join(self.directory, 'best.pth.tar'))
@@ -129,6 +132,20 @@ class Checkpointer(object):
         self.delete_checkpoint(self.old_epoch_files[0])
         self.old_epoch_files = self.old_epoch_files[1:]
       self.old_epoch_files.append(filename)
+
+  # # Load init weights from a source checkpoint
+  # if args.init_checkpoint is not None:
+  #   log.info("overriding parameters from {}:".format(args.init_checkpoint))
+  #   ov_chkpt = th.load(args.init_checkpoint)
+  #   tgt = model.state_dict()
+  #   src = ov_chkpt["model_state"]
+  #   for name, param in src.items():
+  #     if name in tgt and tgt[name].shape == param.shape:
+  #       tgt[name].copy_(param)
+  #       log.info('  - {}'.format(name))
+  #
+  # # Destination checkpoint file
+  # checkpoint = os.path.join(args.output, "checkpoint.ph")
 
 
 class ExponentialMovingAverage(object):
