@@ -273,3 +273,122 @@ class AutoencoderLevel(nn.Module):
       concat = th.cat([us, left], 1)
       output = self.right(concat)
       return output
+
+
+class RecurrentAutoencoder(nn.Module):
+  def __init__(self, ninputs, noutputs, ksize=3, width=64, num_levels=3, num_convs_pre_hidden=1, num_convs=2, 
+               max_width=512, increase_factor=1.0, batchnorm=False, output_type="linear",
+               pooling="max"):
+    super(RecurrentAutoencoder, self).__init__()
+
+    self.num_levels = num_levels
+    self.width = width
+    self.max_width = max_width
+    self.increase_factor = increase_factor
+
+    next_level = None
+    for lvl in range(num_levels-1, -1, -1):
+      w = min(int(width*(increase_factor)**(lvl)), max_width)
+      w2 = min(int(width*(increase_factor)**(lvl+1)), max_width)
+      n_out = w
+      n_us = w2
+      o_type = "relu"
+      if lvl == 0:
+        n_in = ninputs
+        n_out = noutputs
+        o_type = output_type
+      else:
+        w0 = min(int(width*(increase_factor)**(lvl-1)), max_width)
+        n_in = w0
+
+      if lvl == num_levels-1:
+        n_us = None
+
+      next_level = RecurrentAutoencoderLevel(n_in, n_out, next_level=next_level, num_us=n_us,
+                      ksize=ksize, width=w, num_convs=num_convs, num_convs_pre_hidden=num_convs_pre_hidden,
+                      output_type=o_type, batchnorm=batchnorm, pooling=pooling)
+
+    self.add_module("net", next_level)
+
+  def forward(self, x, state):
+    output, new_state = self.net(x, state)
+    return output, new_state
+
+  def get_init_state(self, ref_input):
+    state = []
+    bs, ci, h, w = ref_input.shape[:4]
+    for lvl in range(self.num_levels):
+      chans = min(int(self.width*(self.increase_factor)**(lvl)), self.max_width)
+      state_lvl = ref_input.new()
+      state_lvl.resize_(bs, chans, h, w)
+      state_lvl.zero_()
+      state.append(state_lvl)
+      h /= 2
+      w /= 2
+    state.reverse()
+    return state
+
+
+class RecurrentAutoencoderLevel(nn.Module):
+  def __init__(self, num_inputs, num_outputs, next_level=None,
+               num_us=None,
+               ksize=3, width=64, num_convs=2, num_convs_pre_hidden=1,
+               output_type="linear",
+               batchnorm=True, pooling="max"):
+    super(RecurrentAutoencoderLevel, self).__init__()
+
+    self.is_last = (next_level is None)
+
+    if self.is_last:
+      self.pre_hidden = ConvChain(
+          num_inputs, width, ksize=ksize, width=width,
+          depth=num_convs_pre_hidden, stride=1, pad=True, batchnorm=batchnorm,
+          output_type="relu")
+      self.left = ConvChain(width+width, num_outputs, ksize=ksize, width=width,
+                            depth=num_convs, stride=1, pad=True, 
+                            batchnorm=batchnorm, output_type=output_type)
+    else:
+      assert num_us is not None
+
+      self.pre_hidden = ConvChain(
+          num_inputs, width, ksize=ksize, width=width,
+          depth=num_convs_pre_hidden, stride=1, pad=True, batchnorm=batchnorm,
+          output_type="relu")
+      self.left = ConvChain(
+          width+width, width, ksize=ksize, width=width,
+          depth=num_convs, stride=1, pad=True, batchnorm=batchnorm,
+          output_type="relu")
+
+      if pooling == "conv":
+        self.downsample = nn.Sequential(
+            nn.Conv2d(width, width, stride=2, kernel_size=4, padding=1),
+            nn.ReLU(inplace=True)
+            )
+      elif pooling == "max":
+        self.downsample = nn.MaxPool2d(2, 2)
+      else:
+        raise ValueError("unknown pooling'{}'".format(pooling))
+
+      self.next_level = next_level
+      self.upsample = nn.Upsample(scale_factor=2, mode="nearest")
+      self.right = ConvChain(
+          num_us + width, num_outputs, ksize=ksize, width=width,
+          depth=num_convs, stride=1, pad=True, batchnorm=batchnorm,
+          output_type=output_type)
+
+  def forward(self, x, state):
+    this_state = state.pop()
+    if self.is_last:
+      pre_hidden = self.pre_hidden(x)
+      new_state = self.left(th.cat([pre_hidden, this_state], 1))  # this is also the new hidden state
+      return new_state, [new_state]
+    else:
+      pre_hidden = self.pre_hidden(x)
+      new_state = self.left(th.cat([pre_hidden, this_state], 1))  # this is also the new hidden state
+      ds = self.downsample(new_state)
+      next_level, next_state = self.next_level(ds, state)
+      next_state.append(new_state)
+      us = self.upsample(next_level)
+      concat = th.cat([us, new_state], 1)
+      output = self.right(concat)
+      return output, next_state

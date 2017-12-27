@@ -20,18 +20,43 @@ def make_variable(d, cuda=True):
       ret[k] = Variable(d[k])
   return ret
 
-
-def save(checkpoint, model, params, optimizer, step):
-  log.info("saving checkpoint {} at step {}".format(checkpoint, step))
-  th.save({
-    'model_state': model.state_dict(),
-    'params': params,
-    'optimizer': optimizer.state_dict(),
-    'step': step,
-    } , checkpoint)
-
+#
+# def save(checkpoint, model, params, optimizer, step):
+#   log.info("saving checkpoint {} at step {}".format(checkpoint, step))
+#   th.save({
+#     'model_state': model.state_dict(),
+#     'params': params,
+#     'optimizer': optimizer.state_dict(),
+#     'step': step,
+#     } , checkpoint)
 
 class Checkpointer(object):
+  @staticmethod
+  def _get_sorted_checkpoints(directory):
+    reg = re.compile(r".*\.pth\.tar")
+    all_checkpoints = [f for f in os.listdir(directory) if
+        reg.match(f)]
+    mtimes = []
+    for f in all_checkpoints:
+      mtimes.append(os.path.getmtime(os.path.join(directory, f)))
+
+    mf = sorted(zip(mtimes, all_checkpoints))
+    chkpts = [m[1] for m in reversed(mf)]
+    return chkpts
+
+  @staticmethod
+  def get_meta(directory):
+    all_checkpoints = Checkpointer._get_sorted_checkpoints(directory)
+    for f in all_checkpoints:
+      try:
+        chkpt = th.load(os.path.join(directory, f))
+        meta = chkpt["meta_params"]
+        return meta
+      except Exception as e:
+        print "could not get meta from checkpoint {}, moving on.".format(f)
+        print e
+    raise ValueError("could not get meta from directoy {}".format(directory))
+
   def __init__(self, directory, model, optimizer, 
                max_save=5,
                interval=-1,
@@ -55,9 +80,7 @@ class Checkpointer(object):
     if self.interval > 0:
       self.last_checkpoint_time = time.time()
 
-
-    self.reg = re.compile(r".*\.pth\.tar")
-    all_checkpoints = [f for f in os.listdir(self.directory) if self.reg.match(f)]
+    all_checkpoints = Checkpointer._get_sorted_checkpoints(self.directory)
 
     reg_epoch = re.compile(r"epoch.*\.pth\.tar")
     reg_periodic = re.compile(r"periodic.*\.pth\.tar")
@@ -65,19 +88,17 @@ class Checkpointer(object):
     self.old_timed_files = sorted([c for c in all_checkpoints if reg_periodic.match(c)])
 
   def load_latest(self):
-    all_checkpoints = [f for f in os.listdir(self.directory) if self.reg.match(f)]
+    all_checkpoints = Checkpointer._get_sorted_checkpoints(self.directory)
+
     if len(all_checkpoints) == 0:
       return None, 0
-    mtimes = []
-    for f in all_checkpoints:
-      mtimes.append(os.path.getmtime(os.path.join(self.directory, f)))
 
-    mf = sorted(zip(mtimes, all_checkpoints))
-    for m, f in reversed(mf):
+    for f in all_checkpoints:
       try:
         e = self.load_checkpoint(os.path.join(self.directory, f))
         return f, e
-      except:
+      except Exception as e:
+        print e
         print "could not load latest checkpoint {}, moving on.".format(f)
     return None, -1
 
@@ -116,7 +137,8 @@ class Checkpointer(object):
   def load_checkpoint(self, filename):
     chkpt = th.load(filename)
     self.model.load_state_dict(chkpt["state_dict"])
-    self.optimizer.load_state_dict(chkpt["optimizer"])
+    if self.optimizer is not None:
+      self.optimizer.load_state_dict(chkpt["optimizer"])
     return chkpt["epoch"]
 
   def on_epoch_end(self, epoch):
