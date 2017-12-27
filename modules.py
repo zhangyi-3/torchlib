@@ -50,14 +50,18 @@ class FullyConnected(nn.Module):
     return x
 
 
-class LinearChain(nn.Module):
-  def __init__(self, ninputs, noutputs, ksize=3, width=32, depth=3, stride=1,
-               pad=True, batchnorm=False):
-    super(LinearChain, self).__init__()
+class ConvChain(nn.Module):
+  def __init__(self, ninputs, noutputs, ksize=3, width=64, depth=3, stride=1,
+               pad=True, batchnorm=False, output_type="linear"):
+    super(ConvChain, self).__init__()
+
+    assert depth > 0
+
     if pad:
       padding = ksize//2
     else:
       padding = 0
+
     layers = []
     for d in range(depth-1):
       if d == 0:
@@ -69,21 +73,36 @@ class LinearChain(nn.Module):
             _in, ksize, width, batchnorm=batchnorm, padding=padding, 
             stride=stride))
 
+    # Last layer
     if depth > 1:
       _in = width
     else:
       _in = ninputs
-    conv = nn.Conv2d(_in, noutputs, 1, bias=True)
+
+    conv = nn.Conv2d(_in, noutputs, ksize, bias=True, padding=padding)
     conv.bias.data.zero_()
-    nn.init.xavier_uniform(conv.weight.data)
+    nn.init.xavier_uniform(
+        conv.weight.data, nn.init.calculate_gain(output_type))
     layers.append(conv)
 
+    # Rename layers
     for im, m in enumerate(layers):
       if im == len(layers)-1:
         name = "prediction"
       else:
         name = "layer_{}".format(im)
       self.add_module(name, m)
+
+    if output_type == "linear":
+      pass
+    elif output_type == "relu":
+      self.add_module("output_activation", nn.ReLU(inplace=True))
+    elif output_type == "sigmoid":
+      self.add_module("output_activation", nn.Sigmoid())
+    elif output_type == "tanh":
+      self.add_module("output_activation", nn.Tanh())
+    else:
+      raise ValueError("Unknon output type '{}'".format(output_type))
 
   def forward(self, x):
     for m in self.children():
@@ -92,7 +111,7 @@ class LinearChain(nn.Module):
 
 
 class ConvBNRelu(nn.Module):
-  def __init__(self, ninputs, ksize, noutputs, batchnorm=True, stride=1, padding=0):
+  def __init__(self, ninputs, ksize, noutputs, batchnorm=False, stride=1, padding=0):
     super(ConvBNRelu, self).__init__()
     if batchnorm:
       conv = nn.Conv2d(ninputs, noutputs, ksize, stride=stride, padding=padding, bias=False)
@@ -171,3 +190,86 @@ class SkipAutoencoder(nn.Module):
 
     x = self.prediction(x)
     return x
+
+
+class Autoencoder(nn.Module):
+  def __init__(self, ninputs, noutputs, ksize=3, width=64, num_levels=3, num_convs=2, 
+               max_width=512, increase_factor=1.0, batchnorm=False, output_type="linear",
+               pooling="conv"):
+    super(Autoencoder, self).__init__()
+    next_level = None
+    for lvl in range(num_levels-1, -1, -1):
+      w = min(int(width*(increase_factor)**(lvl)), max_width)
+      w2 = min(int(width*(increase_factor)**(lvl+1)), max_width)
+      n_in = w
+      n_out = w
+      n_ds = w2
+      n_us = w2
+      o_type = "relu"
+      if lvl == 0:
+        n_in = ninputs
+        n_out = noutputs
+        o_type = output_type
+      elif lvl == num_levels-1:
+        n_ds = None
+        n_us = None
+
+      # print lvl, n_in, n_ds, n_us, n_out
+      next_level = AutoencoderLevel(n_in, n_out, next_level=next_level, num_ds=n_ds, num_us=n_us,
+                      ksize=ksize, width=w, num_convs=num_convs, 
+                      output_type=o_type, batchnorm=batchnorm, pooling=pooling)
+    self.add_module("net", next_level)
+
+  def forward(self, x):
+    return self.net(x)
+
+
+class AutoencoderLevel(nn.Module):
+  def __init__(self, num_inputs, num_outputs, next_level=None,
+               num_ds=None, num_us=None,
+               ksize=3, width=64, num_convs=2, output_type="linear",
+               batchnorm=True, pooling="conv"):
+    super(AutoencoderLevel, self).__init__()
+
+    self.is_last = (next_level is None)
+
+    if self.is_last:
+      self.left = ConvChain(num_inputs, num_outputs, ksize=ksize, width=width,
+                            depth=num_convs, stride=1, pad=True, 
+                            batchnorm=batchnorm, output_type=output_type)
+    else:
+      assert num_ds is not None
+      assert num_us is not None
+
+      self.left = ConvChain(
+          num_inputs, width, ksize=ksize, width=width,
+          depth=num_convs, stride=1, pad=True, batchnorm=batchnorm,
+          output_type="relu")
+      if pooling == "conv":
+        self.downsample = nn.Sequential(
+            nn.Conv2d(width, num_ds, stride=2, kernel_size=4, padding=1),
+            nn.ReLU(inplace=True)
+            )
+      elif pooling == "max":
+        self.downsample = nn.MaxPool2d(2, 2)
+      else:
+        raise ValueError("unknown pooling'{}'".format(pooling))
+
+      self.next_level = next_level
+      self.upsample = nn.Upsample(scale_factor=2, mode="nearest")
+      self.right = ConvChain(
+          num_us + width, num_outputs, ksize=ksize, width=width,
+          depth=num_convs, stride=1, pad=True, batchnorm=batchnorm,
+          output_type=output_type)
+
+  def forward(self, x):
+    if self.is_last:
+      return self.left(x)
+    else:
+      left = self.left(x)
+      ds = self.downsample(left)
+      next_level = self.next_level(ds)
+      us = self.upsample(next_level)
+      concat = th.cat([us, left], 1)
+      output = self.right(concat)
+      return output

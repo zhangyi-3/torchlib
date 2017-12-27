@@ -75,10 +75,7 @@ class Checkpointer(object):
     mf = sorted(zip(mtimes, all_checkpoints))
     for m, f in reversed(mf):
       try:
-        if meta_params_only:
-          e = self.load_meta_params(os.path.join(self.directory, f))
-        else:
-          e = self.load_checkpoint(os.path.join(self.directory, f))
+        e = self.load_checkpoint(os.path.join(self.directory, f))
         return f, e
       except:
         print "could not load latest checkpoint {}, moving on.".format(f)
