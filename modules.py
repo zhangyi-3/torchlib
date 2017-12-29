@@ -1,3 +1,5 @@
+from collections import OrderedDict
+
 import numpy as np
 import torch as th
 import torch.nn as nn
@@ -127,69 +129,8 @@ class ConvBNRelu(nn.Module):
     nn.init.xavier_uniform(conv.weight.data, nn.init.calculate_gain('relu'))
 
   def forward(self, x):
-    return self.layer(x)
-
-
-class SkipAutoencoder(nn.Module):
-  def __init__(self, ninputs, noutputs, ksize=3, width=32, depth=3, max_width=512, 
-               batchnorm=True, grow_width=False):
-    super(SkipAutoencoder, self).__init__()
-    ds_layers = []
-    widths = []
-
-    self.upsampler = nn.Upsample(scale_factor=2, mode='bilinear')
-
-    widths = []
-    prev_w = ninputs
-    for d in range(depth):
-      if grow_width:
-        _out = min(width*(2**d), max_width)
-      else:
-        _out = width
-      ds_layers.append(ConvBNRelu(prev_w, ksize, _out, batchnorm=batchnorm,
-                                  stride=2, padding=ksize//2))
-      widths.append(_out)
-      prev_w = _out
-
-    us_layers = []
-    for d in range(depth-1, -1, -1):
-      prev_w = widths[d]
-      if d == 0:
-        # w_input = width+ninputs
-        next_w = ninputs
-        _out = width
-      else:
-        next_w = widths[d-1]
-        _out = next_w
-        # w_input = width*2
-      _in = prev_w + next_w
-      us_layers.append(ConvBNRelu(_in, ksize, _out, batchnorm=batchnorm, 
-                                  padding=ksize//2))
-
-    self.ds_layers = nn.ModuleList(ds_layers)
-    self.us_layers = nn.ModuleList(us_layers)
-
-    self.prediction = nn.Conv2d(width, noutputs, 1)
-    self.prediction.bias.data.zero_()
-    nn.init.xavier_uniform(self.prediction.weight.data)
-
-  def forward(self, x):
-    data = []
-    data.append(x)
-    for l in self.ds_layers:
-      x = l(x)
-      data.append(x)
-
-    x = data.pop()
-    for l in self.us_layers:
-      prev = data.pop()
-      upsampler = nn.Upsample(size=prev.shape[-2:], mode='bilinear')
-      x = upsampler(x)
-      x = th.cat((x, prev), 1)
-      x = l(x)
-
-    x = self.prediction(x)
-    return x
+    out = self.layer(x)
+    return out
 
 
 class Autoencoder(nn.Module):
@@ -360,9 +301,10 @@ class RecurrentAutoencoderLevel(nn.Module):
           output_type="relu")
 
       if pooling == "conv":
-        self.downsample = nn.Sequential(
-            nn.Conv2d(width, width, stride=2, kernel_size=4, padding=1),
-            nn.ReLU(inplace=True)
+        self.downsample = nn.Sequential(OrderedDict([
+            ("conv", nn.Conv2d(width, width, stride=2, kernel_size=4, padding=1)),
+            ("relu", nn.ReLU(inplace=True))
+          ])
             )
       elif pooling == "max":
         self.downsample = nn.MaxPool2d(2, 2)

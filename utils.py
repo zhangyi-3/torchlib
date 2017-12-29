@@ -168,7 +168,7 @@ class Checkpointer(object):
 
 
 class ExponentialMovingAverage(object):
-  def __init__(self, keys, alpha=0.99):
+  def __init__(self, keys, alpha=0.999):
     self.first_update = {k: True for k in keys}
     self.alpha = alpha
     self.values = {k: 0 for k in keys}
