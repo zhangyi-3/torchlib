@@ -54,7 +54,7 @@ class FullyConnected(nn.Module):
 
 class ConvChain(nn.Module):
   def __init__(self, ninputs, noutputs, ksize=3, width=64, depth=3, stride=1,
-               pad=True, batchnorm=False, output_type="linear"):
+               pad=True, batchnorm=False, output_type="linear", activation="relu"):
     super(ConvChain, self).__init__()
 
     assert depth > 0
@@ -73,7 +73,7 @@ class ConvChain(nn.Module):
       layers.append(
           ConvBNRelu(
             _in, ksize, width, batchnorm=batchnorm, padding=padding, 
-            stride=stride))
+            stride=stride, activation=activation))
 
     # Last layer
     if depth > 1:
@@ -99,6 +99,8 @@ class ConvChain(nn.Module):
       pass
     elif output_type == "relu":
       self.add_module("output_activation", nn.ReLU(inplace=True))
+    elif output_type == "leaky_relu":
+      self.add_module("output_activation", nn.LeakyReLU(inplace=True))
     elif output_type == "sigmoid":
       self.add_module("output_activation", nn.Sigmoid())
     elif output_type == "tanh":
@@ -113,20 +115,28 @@ class ConvChain(nn.Module):
 
 
 class ConvBNRelu(nn.Module):
-  def __init__(self, ninputs, ksize, noutputs, batchnorm=False, stride=1, padding=0):
+  def __init__(self, ninputs, ksize, noutputs, batchnorm=False, stride=1, padding=0,
+               activation="relu"):
     super(ConvBNRelu, self).__init__()
+    if activation == "relu":
+      act_fn = nn.ReLU
+    elif activation == "leaky_relu":
+      act_fn = nn.LeakyReLU
+    else:
+      raise NotImplemented
+
     if batchnorm:
       conv = nn.Conv2d(ninputs, noutputs, ksize, stride=stride, padding=padding, bias=False)
       bn = nn.BatchNorm2d(noutputs)
       bn.bias.data.zero_()
       bn.weight.data.fill_(1.0)
-      self.layer = nn.Sequential(conv, bn, nn.ReLU(inplace=True))
+      self.layer = nn.Sequential(conv, bn, act_fn(inplace=True))
     else:
       conv = nn.Conv2d(ninputs, noutputs, ksize, stride=stride, padding=padding)
       conv.bias.data.zero_()
-      self.layer = nn.Sequential(conv, nn.ReLU(inplace=True))
+      self.layer = nn.Sequential(conv, act_fn(inplace=True))
 
-    nn.init.xavier_uniform(conv.weight.data, nn.init.calculate_gain('relu'))
+    nn.init.xavier_uniform(conv.weight.data, nn.init.calculate_gain(activation))
 
   def forward(self, x):
     out = self.layer(x)
@@ -284,7 +294,7 @@ class RecurrentAutoencoderLevel(nn.Module):
       self.pre_hidden = ConvChain(
           num_inputs, width, ksize=ksize, width=width,
           depth=num_convs_pre_hidden, stride=1, pad=True, batchnorm=batchnorm,
-          output_type="relu")
+          output_type="leaky_relu", activation="leaky_relu")
       self.left = ConvChain(width+width, num_outputs, ksize=ksize, width=width,
                             depth=num_convs, stride=1, pad=True, 
                             batchnorm=batchnorm, output_type=output_type)
@@ -294,11 +304,11 @@ class RecurrentAutoencoderLevel(nn.Module):
       self.pre_hidden = ConvChain(
           num_inputs, width, ksize=ksize, width=width,
           depth=num_convs_pre_hidden, stride=1, pad=True, batchnorm=batchnorm,
-          output_type="relu")
+          output_type="leaky_relu", activation="leaky_relu")
       self.left = ConvChain(
           width+width, width, ksize=ksize, width=width,
           depth=num_convs, stride=1, pad=True, batchnorm=batchnorm,
-          output_type="relu")
+          output_type="leaky_relu", activation="leaky_relu")
 
       if pooling == "conv":
         self.downsample = nn.Sequential(OrderedDict([
