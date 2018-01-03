@@ -272,8 +272,8 @@ class RecurrentAutoencoder(nn.Module):
 
     self.add_module("net", next_level)
 
-  def forward(self, x, state):
-    output, new_state = self.net(x, state)
+  def forward(self, x, state, encoder_only=False):
+    output, new_state = self.net(x, state, encoder_only)
     return output, new_state
 
   def get_init_state(self, ref_input):
@@ -344,7 +344,7 @@ class RecurrentAutoencoderLevel(nn.Module):
           normalization_type=normalization_type,
           output_type=output_type)
 
-  def forward(self, x, state):
+  def forward(self, x, state, encoder_only=False):
     this_state = state.pop()
     if self.is_last:
       pre_hidden = self.pre_hidden(x)
@@ -356,7 +356,10 @@ class RecurrentAutoencoderLevel(nn.Module):
       ds = self.downsample(new_state)
       next_level, next_state = self.next_level(ds, state)
       next_state.append(new_state)
-      us = self.upsample(next_level)
-      concat = th.cat([us, new_state], 1)
-      output = self.right(concat)
+      if encoder_only:
+        output = None
+      else:
+        us = self.upsample(next_level)
+        concat = th.cat([us, new_state], 1)
+        output = self.right(concat)
       return output, next_state
