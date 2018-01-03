@@ -8,7 +8,7 @@ import torch.nn.functional as F
 
 class FullyConnected(nn.Module):
   def __init__(self, ninputs, noutputs, width=32, depth=3, 
-               batchnorm=False, dropout=False):
+               normalize=False, dropout=False):
     super(FullyConnected, self).__init__()
 
     if dropout:
@@ -20,7 +20,7 @@ class FullyConnected(nn.Module):
         _in = ninputs
       else:
         _in = width
-      if batchnorm:
+      if normalize:
         fc = nn.Linear(_in, width, bias=False)
         nn.init.xavier_uniform(fc.weight.data, nn.init.calculate_gain('relu'))
         raise ValueError("check batchnorm correctness in FC torchlib")
@@ -54,7 +54,7 @@ class FullyConnected(nn.Module):
 
 class ConvChain(nn.Module):
   def __init__(self, ninputs, noutputs, ksize=3, width=64, depth=3, stride=1,
-               pad=True, batchnorm=False, output_type="linear", activation="relu"):
+               pad=True, normalize=False, normalization_type="batch", output_type="linear", activation="relu"):
     super(ConvChain, self).__init__()
 
     assert depth > 0
@@ -72,7 +72,7 @@ class ConvChain(nn.Module):
         _in = width
       layers.append(
           ConvBNRelu(
-            _in, ksize, width, batchnorm=batchnorm, padding=padding, 
+            _in, ksize, width, normalize=normalize, normalization_type="batch", padding=padding, 
             stride=stride, activation=activation))
 
     # Last layer
@@ -115,7 +115,8 @@ class ConvChain(nn.Module):
 
 
 class ConvBNRelu(nn.Module):
-  def __init__(self, ninputs, ksize, noutputs, batchnorm=False, stride=1, padding=0,
+  def __init__(self, ninputs, ksize, noutputs, normalize=False, 
+               normalization_type="batch", stride=1, padding=0,
                activation="relu"):
     super(ConvBNRelu, self).__init__()
     if activation == "relu":
@@ -125,12 +126,17 @@ class ConvBNRelu(nn.Module):
     else:
       raise NotImplemented
 
-    if batchnorm:
+    if normalize:
       conv = nn.Conv2d(ninputs, noutputs, ksize, stride=stride, padding=padding, bias=False)
-      bn = nn.BatchNorm2d(noutputs)
-      bn.bias.data.zero_()
-      bn.weight.data.fill_(1.0)
-      self.layer = nn.Sequential(conv, bn, act_fn(inplace=True))
+      if normalization_type == "batch":
+        nrm = nn.BatchNorm2d(noutputs)
+      elif normalization_type == "instance":
+        nrm = nn.InstanceNorm2D(noutputs)
+      else:
+        raise ValueError("Unkown normalization type {}".format(normalization_type))
+      nrm.bias.data.zero_()
+      nrm.weight.data.fill_(1.0)
+      self.layer = nn.Sequential(conv, nrm, act_fn(inplace=True))
     else:
       conv = nn.Conv2d(ninputs, noutputs, ksize, stride=stride, padding=padding)
       conv.bias.data.zero_()
@@ -145,7 +151,7 @@ class ConvBNRelu(nn.Module):
 
 class Autoencoder(nn.Module):
   def __init__(self, ninputs, noutputs, ksize=3, width=64, num_levels=3, num_convs=2, 
-               max_width=512, increase_factor=1.0, batchnorm=False, output_type="linear",
+               max_width=512, increase_factor=1.0, normalize=False, normalization_type="batch", output_type="linear",
                pooling="conv"):
     super(Autoencoder, self).__init__()
     next_level = None
@@ -168,7 +174,8 @@ class Autoencoder(nn.Module):
       # print lvl, n_in, n_ds, n_us, n_out
       next_level = AutoencoderLevel(n_in, n_out, next_level=next_level, num_ds=n_ds, num_us=n_us,
                       ksize=ksize, width=w, num_convs=num_convs, 
-                      output_type=o_type, batchnorm=batchnorm, pooling=pooling)
+                      output_type=o_type, normalize=normalize, normalization_type=normalization_type,
+                      pooling=pooling)
     self.add_module("net", next_level)
 
   def forward(self, x):
@@ -179,7 +186,7 @@ class AutoencoderLevel(nn.Module):
   def __init__(self, num_inputs, num_outputs, next_level=None,
                num_ds=None, num_us=None,
                ksize=3, width=64, num_convs=2, output_type="linear",
-               batchnorm=True, pooling="conv"):
+               normalize=True, normalization_type="batch", pooling="conv"):
     super(AutoencoderLevel, self).__init__()
 
     self.is_last = (next_level is None)
@@ -187,14 +194,16 @@ class AutoencoderLevel(nn.Module):
     if self.is_last:
       self.left = ConvChain(num_inputs, num_outputs, ksize=ksize, width=width,
                             depth=num_convs, stride=1, pad=True, 
-                            batchnorm=batchnorm, output_type=output_type)
+                            normalize=normalize, normalization_type=normalization_type,
+                            output_type=output_type)
     else:
       assert num_ds is not None
       assert num_us is not None
 
       self.left = ConvChain(
           num_inputs, width, ksize=ksize, width=width,
-          depth=num_convs, stride=1, pad=True, batchnorm=batchnorm,
+          depth=num_convs, stride=1, pad=True, normalize=normalize,
+          normalization_type=normalization_type,
           output_type="relu")
       if pooling == "conv":
         self.downsample = nn.Sequential(
@@ -210,7 +219,8 @@ class AutoencoderLevel(nn.Module):
       self.upsample = nn.Upsample(scale_factor=2, mode="nearest")
       self.right = ConvChain(
           num_us + width, num_outputs, ksize=ksize, width=width,
-          depth=num_convs, stride=1, pad=True, batchnorm=batchnorm,
+          depth=num_convs, stride=1, pad=True, normalize=normalize,
+          normalization_type=normalization_type,
           output_type=output_type)
 
   def forward(self, x):
@@ -228,8 +238,8 @@ class AutoencoderLevel(nn.Module):
 
 class RecurrentAutoencoder(nn.Module):
   def __init__(self, ninputs, noutputs, ksize=3, width=64, num_levels=3, num_convs_pre_hidden=1, num_convs=2, 
-               max_width=512, increase_factor=1.0, batchnorm=False, output_type="linear",
-               pooling="max"):
+               max_width=512, increase_factor=1.0, normalize=False, normalization_type="batch",
+               output_type="linear", pooling="max"):
     super(RecurrentAutoencoder, self).__init__()
 
     self.num_levels = num_levels
@@ -257,7 +267,8 @@ class RecurrentAutoencoder(nn.Module):
 
       next_level = RecurrentAutoencoderLevel(n_in, n_out, next_level=next_level, num_us=n_us,
                       ksize=ksize, width=w, num_convs=num_convs, num_convs_pre_hidden=num_convs_pre_hidden,
-                      output_type=o_type, batchnorm=batchnorm, pooling=pooling)
+                      output_type=o_type, normalize=normalize, 
+                      normalization_type=normalization_type, pooling=pooling)
 
     self.add_module("net", next_level)
 
@@ -285,7 +296,7 @@ class RecurrentAutoencoderLevel(nn.Module):
                num_us=None,
                ksize=3, width=64, num_convs=2, num_convs_pre_hidden=1,
                output_type="linear",
-               batchnorm=True, pooling="max"):
+               normalize=True, normalization_type="batch", pooling="max"):
     super(RecurrentAutoencoderLevel, self).__init__()
 
     self.is_last = (next_level is None)
@@ -293,21 +304,25 @@ class RecurrentAutoencoderLevel(nn.Module):
     if self.is_last:
       self.pre_hidden = ConvChain(
           num_inputs, width, ksize=ksize, width=width,
-          depth=num_convs_pre_hidden, stride=1, pad=True, batchnorm=batchnorm,
+          depth=num_convs_pre_hidden, stride=1, pad=True, normalize=normalize,
+          normalization_type=normalization_type,
           output_type="leaky_relu", activation="leaky_relu")
       self.left = ConvChain(width+width, num_outputs, ksize=ksize, width=width,
                             depth=num_convs, stride=1, pad=True, 
-                            batchnorm=batchnorm, output_type=output_type)
+                            normalize=normalize, normalization_type=normalization_type,
+                            output_type=output_type)
     else:
       assert num_us is not None
 
       self.pre_hidden = ConvChain(
           num_inputs, width, ksize=ksize, width=width,
-          depth=num_convs_pre_hidden, stride=1, pad=True, batchnorm=batchnorm,
+          depth=num_convs_pre_hidden, stride=1, pad=True, normalize=normalize,
+          normalization_type=normalization_type,
           output_type="leaky_relu", activation="leaky_relu")
       self.left = ConvChain(
           width+width, width, ksize=ksize, width=width,
-          depth=num_convs, stride=1, pad=True, batchnorm=batchnorm,
+          depth=num_convs, stride=1, pad=True, normalize=normalize,
+          normalization_type=normalization_type,
           output_type="leaky_relu", activation="leaky_relu")
 
       if pooling == "conv":
@@ -325,7 +340,8 @@ class RecurrentAutoencoderLevel(nn.Module):
       self.upsample = nn.Upsample(scale_factor=2, mode="nearest")
       self.right = ConvChain(
           num_us + width, num_outputs, ksize=ksize, width=width,
-          depth=num_convs, stride=1, pad=True, batchnorm=batchnorm,
+          depth=num_convs, stride=1, pad=True, normalize=normalize,
+          normalization_type=normalization_type,
           output_type=output_type)
 
   def forward(self, x, state):
