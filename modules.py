@@ -5,6 +5,7 @@ import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
 
+from torchlib.image import crop_like
 
 class FullyConnected(nn.Module):
   def __init__(self, ninputs, noutputs, width=32, depth=3, 
@@ -237,15 +238,20 @@ class AutoencoderLevel(nn.Module):
 
 
 class RecurrentAutoencoder(nn.Module):
-  def __init__(self, ninputs, noutputs, ksize=3, width=64, num_levels=3, num_convs_pre_hidden=1, num_convs=2, 
-               max_width=512, increase_factor=1.0, normalize=False, normalization_type="batch",
-               output_type="linear", pooling="max"):
+  def __init__(self, ninputs, noutputs, ksize=3, width=64, num_levels=3, 
+               num_convs_pre_hidden=1, num_convs=2, 
+               max_width=512, increase_factor=1.0, 
+               normalize=False, normalization_type="batch",
+               output_type="linear", pooling="max", pad=False):
     super(RecurrentAutoencoder, self).__init__()
 
     self.num_levels = num_levels
     self.width = width
     self.max_width = max_width
     self.increase_factor = increase_factor
+    self.ksize = ksize
+    self.num_convs = num_convs
+    self.num_convs_pre_hidden = num_convs_pre_hidden
 
     next_level = None
     for lvl in range(num_levels-1, -1, -1):
@@ -268,7 +274,7 @@ class RecurrentAutoencoder(nn.Module):
       next_level = RecurrentAutoencoderLevel(n_in, n_out, next_level=next_level, num_us=n_us,
                       ksize=ksize, width=w, num_convs=num_convs, num_convs_pre_hidden=num_convs_pre_hidden,
                       output_type=o_type, normalize=normalize, 
-                      normalization_type=normalization_type, pooling=pooling)
+                      normalization_type=normalization_type, pooling=pooling, pad=pad)
 
     self.add_module("net", next_level)
 
@@ -280,15 +286,42 @@ class RecurrentAutoencoder(nn.Module):
     state = []
     bs, ci, h, w = ref_input.shape[:4]
     for lvl in range(self.num_levels):
+      # we do pad the hidden state...
+      h -= (self.num_convs_pre_hidden)*(self.ksize - 1)
+      w -= (self.num_convs_pre_hidden)*(self.ksize - 1)
       chans = min(int(self.width*(self.increase_factor)**(lvl)), self.max_width)
       state_lvl = ref_input.new()
       state_lvl.resize_(bs, chans, h, w)
       state_lvl.zero_()
       state.append(state_lvl)
+      # ...but we make sure only the valid pixels are propagated
+      # downwards
+      h -= (self.num_convs)*(self.ksize - 1)
+      w -= (self.num_convs)*(self.ksize - 1)
       h /= 2
       w /= 2
     state.reverse()
     return state
+
+  def get_valid_crop(self, ref_input):
+    state = []
+    bs, ci, h, w = ref_input.shape[:4]
+    h_ref = h
+    w_ref = w
+    for lvl in range(self.num_levels):
+      h -= (self.num_convs_pre_hidden + self.num_convs)*(self.ksize - 1)
+      w -= (self.num_convs_pre_hidden + self.num_convs)*(self.ksize - 1)
+      if lvl < self.num_levels - 1:
+        h /= 2
+        w /= 2
+    for lvl in range(self.num_levels):
+      h -= (self.num_convs)*(self.ksize - 1)
+      w -= (self.num_convs)*(self.ksize - 1)
+      if lvl < self.num_levels - 1 :
+        h *= 2
+        w *= 2
+
+    return (h_ref - h) // 2, (w_ref - w ) // 2
 
 
 class RecurrentAutoencoderLevel(nn.Module):
@@ -296,15 +329,19 @@ class RecurrentAutoencoderLevel(nn.Module):
                num_us=None,
                ksize=3, width=64, num_convs=2, num_convs_pre_hidden=1,
                output_type="linear",
-               normalize=True, normalization_type="batch", pooling="max"):
+               normalize=True, normalization_type="batch", pooling="max",
+               pad=False):
     super(RecurrentAutoencoderLevel, self).__init__()
 
     self.is_last = (next_level is None)
+    self.pad = pad
+    self.num_convs = num_convs
+    self.ksize = ksize
 
     if self.is_last:
       self.pre_hidden = ConvChain(
           num_inputs, width, ksize=ksize, width=width,
-          depth=num_convs_pre_hidden, stride=1, pad=True, normalize=normalize,
+          depth=num_convs_pre_hidden, stride=1, pad=pad, normalize=normalize,
           normalization_type=normalization_type,
           output_type="leaky_relu", activation="leaky_relu")
       self.left = ConvChain(width+width, num_outputs, ksize=ksize, width=width,
@@ -316,9 +353,11 @@ class RecurrentAutoencoderLevel(nn.Module):
 
       self.pre_hidden = ConvChain(
           num_inputs, width, ksize=ksize, width=width,
-          depth=num_convs_pre_hidden, stride=1, pad=True, normalize=normalize,
+          depth=num_convs_pre_hidden, stride=1, pad=pad, normalize=normalize,
           normalization_type=normalization_type,
           output_type="leaky_relu", activation="leaky_relu")
+      # We do not pad the post-hidden conv, but is pad is on, we will crop
+      # during forward. This maintains consistent hidden state size.
       self.left = ConvChain(
           width+width, width, ksize=ksize, width=width,
           depth=num_convs, stride=1, pad=True, normalize=normalize,
@@ -326,11 +365,7 @@ class RecurrentAutoencoderLevel(nn.Module):
           output_type="leaky_relu", activation="leaky_relu")
 
       if pooling == "conv":
-        self.downsample = nn.Sequential(OrderedDict([
-            ("conv", nn.Conv2d(width, width, stride=2, kernel_size=4, padding=1)),
-            ("relu", nn.ReLU(inplace=True))
-          ])
-            )
+        raise NotImplemented
       elif pooling == "max":
         self.downsample = nn.MaxPool2d(2, 2)
       else:
@@ -340,26 +375,37 @@ class RecurrentAutoencoderLevel(nn.Module):
       self.upsample = nn.Upsample(scale_factor=2, mode="nearest")
       self.right = ConvChain(
           num_us + width, num_outputs, ksize=ksize, width=width,
-          depth=num_convs, stride=1, pad=True, normalize=normalize,
+          depth=num_convs, stride=1, pad=pad, normalize=normalize,
           normalization_type=normalization_type,
           output_type=output_type)
 
   def forward(self, x, state, encoder_only=False):
     this_state = state.pop()
+    pre_hidden = self.pre_hidden(x)
+    if not self.pad:
+      pre_hidden = crop_like(pre_hidden, this_state)
+
     if self.is_last:
-      pre_hidden = self.pre_hidden(x)
       new_state = self.left(th.cat([pre_hidden, this_state], 1))  # this is also the new hidden state
       return new_state, [new_state]
     else:
-      pre_hidden = self.pre_hidden(x)
       new_state = self.left(th.cat([pre_hidden, this_state], 1))  # this is also the new hidden state
-      ds = self.downsample(new_state)
+
+      if not self.pad:
+        c = self.num_convs*(self.ksize-1) // 2
+        new_state = new_state
+        ds = self.downsample(new_state[..., c:-c, c:-c])
+      else:
+        ds = self.downsample(new_state)
+
       next_level, next_state = self.next_level(ds, state)
       next_state.append(new_state)
       if encoder_only:
         output = None
       else:
         us = self.upsample(next_level)
+        if not self.pad:
+          new_state = crop_like(new_state, us)
         concat = th.cat([us, new_state], 1)
         output = self.right(concat)
       return output, next_state
