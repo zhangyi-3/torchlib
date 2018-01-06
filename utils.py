@@ -20,15 +20,6 @@ def make_variable(d, cuda=True):
       ret[k] = Variable(d[k])
   return ret
 
-#
-# def save(checkpoint, model, params, optimizer, step):
-#   log.info("saving checkpoint {} at step {}".format(checkpoint, step))
-#   th.save({
-#     'model_state': model.state_dict(),
-#     'params': params,
-#     'optimizer': optimizer.state_dict(),
-#     'step': step,
-#     } , checkpoint)
 
 class Checkpointer(object):
   @staticmethod
