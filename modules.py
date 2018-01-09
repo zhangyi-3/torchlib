@@ -252,6 +252,7 @@ class RecurrentAutoencoder(nn.Module):
     self.ksize = ksize
     self.num_convs = num_convs
     self.num_convs_pre_hidden = num_convs_pre_hidden
+    self.pad = pad
 
     next_level = None
     for lvl in range(num_levels-1, -1, -1):
@@ -286,42 +287,24 @@ class RecurrentAutoencoder(nn.Module):
     state = []
     bs, ci, h, w = ref_input.shape[:4]
     for lvl in range(self.num_levels):
-      # we do pad the hidden state...
-      h -= (self.num_convs_pre_hidden)*(self.ksize - 1)
-      w -= (self.num_convs_pre_hidden)*(self.ksize - 1)
+      if not self.pad:
+        # we do pad the hidden state...
+        h -= (self.num_convs_pre_hidden)*(self.ksize - 1)
+        w -= (self.num_convs_pre_hidden)*(self.ksize - 1)
       chans = min(int(self.width*(self.increase_factor)**(lvl)), self.max_width)
       state_lvl = ref_input.new()
       state_lvl.resize_(bs, chans, h, w)
       state_lvl.zero_()
       state.append(state_lvl)
-      # ...but we make sure only the valid pixels are propagated
-      # downwards
-      h -= (self.num_convs)*(self.ksize - 1)
-      w -= (self.num_convs)*(self.ksize - 1)
+      if not self.pad:
+        # ...but we make sure only the valid pixels are propagated
+        # downwards
+        h -= (self.num_convs)*(self.ksize - 1)
+        w -= (self.num_convs)*(self.ksize - 1)
       h /= 2
       w /= 2
     state.reverse()
     return state
-
-  def get_valid_crop(self, ref_input):
-    state = []
-    bs, ci, h, w = ref_input.shape[:4]
-    h_ref = h
-    w_ref = w
-    for lvl in range(self.num_levels):
-      h -= (self.num_convs_pre_hidden + self.num_convs)*(self.ksize - 1)
-      w -= (self.num_convs_pre_hidden + self.num_convs)*(self.ksize - 1)
-      if lvl < self.num_levels - 1:
-        h /= 2
-        w /= 2
-    for lvl in range(self.num_levels):
-      h -= (self.num_convs)*(self.ksize - 1)
-      w -= (self.num_convs)*(self.ksize - 1)
-      if lvl < self.num_levels - 1 :
-        h *= 2
-        w *= 2
-
-    return (h_ref - h) // 2, (w_ref - w ) // 2
 
 
 class RecurrentAutoencoderLevel(nn.Module):
