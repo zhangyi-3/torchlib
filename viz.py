@@ -130,7 +130,7 @@ class ScatterVisualizer(Visualizer):
     self.name = name
 
   def update(self, x, title="", xlabel="x", ylabel="y",
-             color=None):
+             color=None, markersize=None):
     plot_update = None
     if self.vis.win_exists(self.name, env=self.vis.env):
       plot_update = False
@@ -144,6 +144,7 @@ class ScatterVisualizer(Visualizer):
           'xlabel': xlabel,
           'ylabel': ylabel,
           'markercolor': color,
+          'markersize': markersize,
           },
         win=self.name)
 
