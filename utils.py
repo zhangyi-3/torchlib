@@ -189,5 +189,5 @@ class Averager(object):
       self.counts[k] = 0
 
   def update(self, key, value, count=1):
-    self.values[key] += value
-    self.counts[key] = count
+    self.values[key] += value*count
+    self.counts[key] += count
