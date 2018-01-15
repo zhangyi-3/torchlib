@@ -93,15 +93,16 @@ class Checkpointer(object):
         print "could not load latest checkpoint {}, moving on.".format(f)
     return None, -1
 
-  def save_checkpoint(self, epoch, filename, is_best=False):
+  def save_checkpoint(self, epoch, filename):
     th.save({ 
         'epoch': epoch + 1,
         'state_dict': self.model.state_dict(),
         'optimizer' : self.optimizer.state_dict(),
         'meta_params': self.meta_params,
         }, os.path.join(self.directory, filename))
-    if is_best:
-      shutil.copyfile(filename, os.path.join(self.directory, 'best.pth.tar'))
+
+  def save_best(self, epoch):
+    self.save_checkpoint(epoch, 'best.pth.tar')
 
   def periodic_checkpoint(self, epoch):
     now = time.time()
