@@ -78,7 +78,7 @@ class Checkpointer(object):
     self.old_epoch_files = sorted([c for c in all_checkpoints if reg_epoch.match(c)])
     self.old_timed_files = sorted([c for c in all_checkpoints if reg_periodic.match(c)])
 
-  def load_latest(self):
+  def load_latest(self, ignore_optim=False):
     all_checkpoints = Checkpointer._get_sorted_checkpoints(self.directory)
 
     if len(all_checkpoints) == 0:
@@ -86,7 +86,7 @@ class Checkpointer(object):
 
     for f in all_checkpoints:
       try:
-        e = self.load_checkpoint(os.path.join(self.directory, f))
+        e = self.load_checkpoint(os.path.join(self.directory, f), ignore_optim=ignore_optim)
         return f, e
       except Exception as e:
         print e
@@ -126,10 +126,10 @@ class Checkpointer(object):
       print "exception in chekpoint deletion."
       pass
 
-  def load_checkpoint(self, filename):
+  def load_checkpoint(self, filename, ignore_optim=False):
     chkpt = th.load(filename)
     self.model.load_state_dict(chkpt["state_dict"])
-    if self.optimizer is not None:
+    if self.optimizer is not None and not ignore_optim:
       self.optimizer.load_state_dict(chkpt["optimizer"])
     return chkpt["epoch"]
 
