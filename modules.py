@@ -4,6 +4,7 @@ import numpy as np
 import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.autograd import Variable
 
 from torchlib.image import crop_like
 
@@ -292,9 +293,10 @@ class RecurrentAutoencoder(nn.Module):
         h -= (self.num_convs_pre_hidden)*(self.ksize - 1)
         w -= (self.num_convs_pre_hidden)*(self.ksize - 1)
       chans = min(int(self.width*(self.increase_factor)**(lvl)), self.max_width)
-      state_lvl = ref_input.new()
-      state_lvl.resize_(bs, chans, h, w)
+      state_lvl = ref_input.data.new()
+      state_lvl.resize_(bs, chans, int(h), int(w))
       state_lvl.zero_()
+      state_lvl = Variable(state_lvl)
       state.append(state_lvl)
       if not self.pad:
         # ...but we make sure only the valid pixels are propagated

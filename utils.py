@@ -44,8 +44,8 @@ class Checkpointer(object):
         meta = chkpt["meta_params"]
         return meta
       except Exception as e:
-        print "could not get meta from checkpoint {}, moving on.".format(f)
-        print e
+        print("could not get meta from checkpoint {}, moving on.".format(f))
+        print(e)
     raise ValueError("could not get meta from directoy {}".format(directory))
 
   def __init__(self, directory, model, optimizer, 
@@ -89,8 +89,8 @@ class Checkpointer(object):
         e = self.load_checkpoint(os.path.join(self.directory, f))
         return f, e
       except Exception as e:
-        print e
-        print "could not load latest checkpoint {}, moving on.".format(f)
+        print(e)
+        print("could not load latest checkpoint {}, moving on.".format(f))
     return None, -1
 
   def save_checkpoint(self, epoch, filename, is_best=False):
@@ -122,7 +122,7 @@ class Checkpointer(object):
     try:
       os.remove(os.path.join(self.directory, filename))
     except:
-      print "exception in chekpoint deletion."
+      print("exception in chekpoint deletion.")
       pass
 
   def load_checkpoint(self, filename):
