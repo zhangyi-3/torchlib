@@ -56,7 +56,9 @@ class FullyConnected(nn.Module):
 
 class ConvChain(nn.Module):
   def __init__(self, ninputs, noutputs, ksize=3, width=64, depth=3, stride=1,
-               pad=True, normalize=False, normalization_type="batch", output_type="linear", activation="relu"):
+               pad=True, normalize=False, normalization_type="batch", 
+               output_type="linear", 
+               activation="relu"):
     super(ConvChain, self).__init__()
 
     assert depth > 0
@@ -152,32 +154,37 @@ class ConvBNRelu(nn.Module):
 
 
 class Autoencoder(nn.Module):
-  def __init__(self, ninputs, noutputs, ksize=3, width=64, num_levels=3, num_convs=2, 
-               max_width=512, increase_factor=1.0, normalize=False, normalization_type="batch", output_type="linear",
-               pooling="conv"):
+  def __init__(self, ninputs, noutputs, ksize=3, width=64, num_levels=3, 
+               num_convs=2, max_width=512, increase_factor=1.0, 
+               normalize=False, normalization_type="batch", 
+               output_type="linear",
+               activation="relu", pooling="conv"):
     super(Autoencoder, self).__init__()
+    
+    assert pooling in ["max"]
+
     next_level = None
     for lvl in range(num_levels-1, -1, -1):
+      n_in = min(int(width*(increase_factor)**(lvl-1)), max_width)
       w = min(int(width*(increase_factor)**(lvl)), max_width)
-      w2 = min(int(width*(increase_factor)**(lvl+1)), max_width)
-      n_in = w
+      n_us = min(int(width*(increase_factor)**(lvl+1)), max_width)
       n_out = w
-      n_ds = w2
-      n_us = w2
-      o_type = "relu"
+      o_type = activation
+
       if lvl == 0:
         n_in = ninputs
-        n_out = noutputs
         o_type = output_type
+        n_out = noutputs
       elif lvl == num_levels-1:
-        n_ds = None
         n_us = None
 
-      # print lvl, n_in, n_ds, n_us, n_out
-      next_level = AutoencoderLevel(n_in, n_out, next_level=next_level, num_ds=n_ds, num_us=n_us,
-                      ksize=ksize, width=w, num_convs=num_convs, 
-                      output_type=o_type, normalize=normalize, normalization_type=normalization_type,
-                      pooling=pooling)
+      next_level = AutoencoderLevel(
+          n_in, n_out, next_level=next_level, num_us=n_us,
+          ksize=ksize, width=w, num_convs=num_convs, 
+          output_type=o_type, normalize=normalize, 
+          normalization_type=normalization_type,
+          activation=activation, pooling=pooling)
+
     self.add_module("net", next_level)
 
   def forward(self, x):
@@ -186,33 +193,29 @@ class Autoencoder(nn.Module):
 
 class AutoencoderLevel(nn.Module):
   def __init__(self, num_inputs, num_outputs, next_level=None,
-               num_ds=None, num_us=None,
+               num_us=None,
                ksize=3, width=64, num_convs=2, output_type="linear",
-               normalize=True, normalization_type="batch", pooling="conv"):
+               normalize=True, normalization_type="batch", pooling="conv",
+               activation="relu"):
     super(AutoencoderLevel, self).__init__()
 
     self.is_last = (next_level is None)
 
     if self.is_last:
-      self.left = ConvChain(num_inputs, num_outputs, ksize=ksize, width=width,
-                            depth=num_convs, stride=1, pad=True, 
-                            normalize=normalize, normalization_type=normalization_type,
-                            output_type=output_type)
+      self.left = ConvChain(
+          num_inputs, num_outputs, ksize=ksize, width=width,
+          depth=num_convs, stride=1, pad=True, 
+          normalize=normalize, normalization_type=normalization_type,
+          output_type=output_type)
     else:
-      assert num_ds is not None
       assert num_us is not None
 
       self.left = ConvChain(
           num_inputs, width, ksize=ksize, width=width,
           depth=num_convs, stride=1, pad=True, normalize=normalize,
           normalization_type=normalization_type,
-          output_type="relu")
-      if pooling == "conv":
-        self.downsample = nn.Sequential(
-            nn.Conv2d(width, num_ds, stride=2, kernel_size=4, padding=1),
-            nn.ReLU(inplace=True)
-            )
-      elif pooling == "max":
+          output_type=activation, activation=activation)
+      if pooling == "max":
         self.downsample = nn.MaxPool2d(2, 2)
       else:
         raise ValueError("unknown pooling'{}'".format(pooling))
@@ -226,16 +229,16 @@ class AutoencoderLevel(nn.Module):
           output_type=output_type)
 
   def forward(self, x):
+    left = self.left(x)
     if self.is_last:
-      return self.left(x)
-    else:
-      left = self.left(x)
-      ds = self.downsample(left)
-      next_level = self.next_level(ds)
-      us = self.upsample(next_level)
-      concat = th.cat([us, left], 1)
-      output = self.right(concat)
-      return output
+      return left
+
+    ds = self.downsample(left)
+    next_level = self.next_level(ds)
+    us = self.upsample(next_level)
+    concat = th.cat([us, left], 1)
+    output = self.right(concat)
+    return output
 
 
 class RecurrentAutoencoder(nn.Module):
@@ -243,8 +246,12 @@ class RecurrentAutoencoder(nn.Module):
                num_convs_pre_hidden=1, num_convs=2, 
                max_width=512, increase_factor=1.0, 
                normalize=False, normalization_type="batch",
-               output_type="linear", pooling="max", pad=False):
+               activation="leaky_relu",
+               output_type="linear", pooling="max", pad=True):
     super(RecurrentAutoencoder, self).__init__()
+
+    if not pad:
+      raise ValueError("rnn with no padding is not tested!")
 
     self.num_levels = num_levels
     self.width = width
@@ -258,25 +265,22 @@ class RecurrentAutoencoder(nn.Module):
     next_level = None
     for lvl in range(num_levels-1, -1, -1):
       w = min(int(width*(increase_factor)**(lvl)), max_width)
-      w2 = min(int(width*(increase_factor)**(lvl+1)), max_width)
+      n_us = min(int(width*(increase_factor)**(lvl+1)), max_width)
       n_out = w
-      n_us = w2
-      o_type = "relu"
+      o_type = activation
+
       if lvl == 0:
         n_in = ninputs
         n_out = noutputs
         o_type = output_type
-      else:
-        w0 = min(int(width*(increase_factor)**(lvl-1)), max_width)
-        n_in = w0
-
-      if lvl == num_levels-1:
+      elif lvl == num_levels-1:
         n_us = None
 
-      next_level = RecurrentAutoencoderLevel(n_in, n_out, next_level=next_level, num_us=n_us,
-                      ksize=ksize, width=w, num_convs=num_convs, num_convs_pre_hidden=num_convs_pre_hidden,
-                      output_type=o_type, normalize=normalize, 
-                      normalization_type=normalization_type, pooling=pooling, pad=pad)
+      next_level = RecurrentAutoencoderLevel(
+          n_in, n_out, next_level=next_level, num_us=n_us,
+          ksize=ksize, width=w, num_convs=num_convs, num_convs_pre_hidden=num_convs_pre_hidden,
+          output_type=o_type, normalize=normalize, activation=activation,
+          normalization_type=normalization_type, pooling=pooling, pad=pad)
 
     self.add_module("net", next_level)
 
@@ -288,21 +292,12 @@ class RecurrentAutoencoder(nn.Module):
     state = []
     bs, ci, h, w = ref_input.shape[:4]
     for lvl in range(self.num_levels):
-      if not self.pad:
-        # we do pad the hidden state...
-        h -= (self.num_convs_pre_hidden)*(self.ksize - 1)
-        w -= (self.num_convs_pre_hidden)*(self.ksize - 1)
       chans = min(int(self.width*(self.increase_factor)**(lvl)), self.max_width)
       state_lvl = ref_input.data.new()
       state_lvl.resize_(bs, chans, int(h), int(w))
       state_lvl.zero_()
       state_lvl = Variable(state_lvl)
       state.append(state_lvl)
-      if not self.pad:
-        # ...but we make sure only the valid pixels are propagated
-        # downwards
-        h -= (self.num_convs)*(self.ksize - 1)
-        w -= (self.num_convs)*(self.ksize - 1)
       h /= 2
       w /= 2
     state.reverse()
@@ -313,45 +308,39 @@ class RecurrentAutoencoderLevel(nn.Module):
   def __init__(self, num_inputs, num_outputs, next_level=None,
                num_us=None,
                ksize=3, width=64, num_convs=2, num_convs_pre_hidden=1,
-               output_type="linear",
+               activation="relu", output_type="linear",
                normalize=True, normalization_type="batch", pooling="max",
-               pad=False):
+               pad=True):
     super(RecurrentAutoencoderLevel, self).__init__()
+
+    if not pad:
+      raise ValueError("rnn with no padding is not tested!")
 
     self.is_last = (next_level is None)
     self.pad = pad
     self.num_convs = num_convs
     self.ksize = ksize
 
+    n_left_outputs = width
     if self.is_last:
-      self.pre_hidden = ConvChain(
-          num_inputs, width, ksize=ksize, width=width,
-          depth=num_convs_pre_hidden, stride=1, pad=pad, normalize=normalize,
-          normalization_type=normalization_type,
-          output_type="leaky_relu", activation="leaky_relu")
-      self.left = ConvChain(width+width, num_outputs, ksize=ksize, width=width,
-                            depth=num_convs, stride=1, pad=True, 
-                            normalize=normalize, normalization_type=normalization_type,
-                            output_type=output_type)
-    else:
+      n_left_outputs = num_outputs
+
+    self.pre_hidden = ConvChain(
+        num_inputs, width, ksize=ksize, width=width,
+        depth=num_convs_pre_hidden, stride=1, pad=pad, normalize=normalize,
+        normalization_type=normalization_type,
+        output_type="leaky_relu", activation="leaky_relu")
+
+    self.left = ConvChain(
+        width+width, n_left_outputs, ksize=ksize, width=width,
+        depth=num_convs, stride=1, pad=True, normalize=normalize,
+        normalization_type=normalization_type,
+        output_type=acitvation, activation=activation)
+
+    if not self.is_last:
       assert num_us is not None
 
-      self.pre_hidden = ConvChain(
-          num_inputs, width, ksize=ksize, width=width,
-          depth=num_convs_pre_hidden, stride=1, pad=pad, normalize=normalize,
-          normalization_type=normalization_type,
-          output_type="leaky_relu", activation="leaky_relu")
-      # We do not pad the post-hidden conv, but is pad is on, we will crop
-      # during forward. This maintains consistent hidden state size.
-      self.left = ConvChain(
-          width+width, width, ksize=ksize, width=width,
-          depth=num_convs, stride=1, pad=True, normalize=normalize,
-          normalization_type=normalization_type,
-          output_type="leaky_relu", activation="leaky_relu")
-
-      if pooling == "conv":
-        raise NotImplemented
-      elif pooling == "max":
+      if pooling == "max":
         self.downsample = nn.MaxPool2d(2, 2)
       else:
         raise ValueError("unknown pooling'{}'".format(pooling))
@@ -362,35 +351,26 @@ class RecurrentAutoencoderLevel(nn.Module):
           num_us + width, num_outputs, ksize=ksize, width=width,
           depth=num_convs, stride=1, pad=pad, normalize=normalize,
           normalization_type=normalization_type,
+          activation=activation,
           output_type=output_type)
 
   def forward(self, x, state, encoder_only=False):
     this_state = state.pop()
     pre_hidden = self.pre_hidden(x)
-    if not self.pad:
-      pre_hidden = crop_like(pre_hidden, this_state)
+
+    new_state = self.left(th.cat([pre_hidden, this_state], 1))  # this is also the new hidden state
 
     if self.is_last:
-      new_state = self.left(th.cat([pre_hidden, this_state], 1))  # this is also the new hidden state
       return new_state, [new_state]
-    else:
-      new_state = self.left(th.cat([pre_hidden, this_state], 1))  # this is also the new hidden state
 
-      if not self.pad:
-        c = self.num_convs*(self.ksize-1) // 2
-        new_state = new_state
-        ds = self.downsample(new_state[..., c:-c, c:-c])
-      else:
-        ds = self.downsample(new_state)
+    ds = self.downsample(new_state)
+    next_level, next_state = self.next_level(ds, state)
+    next_state.append(new_state)
 
-      next_level, next_state = self.next_level(ds, state)
-      next_state.append(new_state)
-      if encoder_only:
-        output = None
-      else:
-        us = self.upsample(next_level)
-        if not self.pad:
-          new_state = crop_like(new_state, us)
-        concat = th.cat([us, new_state], 1)
-        output = self.right(concat)
-      return output, next_state
+    if encoder_only: # only compute the internal recurrent state
+      return None, next_state
+
+    us = self.upsample(next_level)
+    concat = th.cat([us, new_state], 1)
+    output = self.right(concat)
+    return output, next_state
