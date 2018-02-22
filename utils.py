@@ -152,8 +152,11 @@ class Checkpointer(object):
     names = []
     for name, param in src.items():
       if name in tgt and tgt[name].shape == param.shape:
+        s = "{:10.10s}".format(name)
+        s += " {:.2f} ({:.2f})".format(tgt[name].cpu().mean(), tgt[name].cpu().std())
         tgt[name].copy_(param)
-        names.append(name)
+        s += " -> {:.2f} ({:.2f})".format(param.cpu().mean(), param.cpu().std())
+        names.append(s)
     return names
 
 
