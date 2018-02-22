@@ -144,19 +144,17 @@ class Checkpointer(object):
         self.old_epoch_files = self.old_epoch_files[1:]
       self.old_epoch_files.append(filename)
 
-  # # Load init weights from a source checkpoint
-  # if args.init_checkpoint is not None:
-  #   log.info("overriding parameters from {}:".format(args.init_checkpoint))
-  #   ov_chkpt = th.load(args.init_checkpoint)
-  #   tgt = model.state_dict()
-  #   src = ov_chkpt["model_state"]
-  #   for name, param in src.items():
-  #     if name in tgt and tgt[name].shape == param.shape:
-  #       tgt[name].copy_(param)
-  #       log.info('  - {}'.format(name))
-  #
-  # # Destination checkpoint file
-  # checkpoint = os.path.join(args.output, "checkpoint.ph")
+  # Load init weights from a source checkpoint
+  def override_params(self, filename):
+    ov_chkpt = th.load(filename)
+    tgt = self.model.state_dict()
+    src = ov_chkpt["state_dict"]
+    names = []
+    for name, param in src.items():
+      if name in tgt and tgt[name].shape == param.shape:
+        tgt[name].copy_(param)
+        names.append(name)
+    return names
 
 
 class ExponentialMovingAverage(object):
