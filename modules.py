@@ -264,6 +264,7 @@ class RecurrentAutoencoder(nn.Module):
 
     next_level = None
     for lvl in range(num_levels-1, -1, -1):
+      n_in = min(int(width*(increase_factor)**(lvl-1)), max_width)
       w = min(int(width*(increase_factor)**(lvl)), max_width)
       n_us = min(int(width*(increase_factor)**(lvl+1)), max_width)
       n_out = w
@@ -329,13 +330,13 @@ class RecurrentAutoencoderLevel(nn.Module):
         num_inputs, width, ksize=ksize, width=width,
         depth=num_convs_pre_hidden, stride=1, pad=pad, normalize=normalize,
         normalization_type=normalization_type,
-        output_type="leaky_relu", activation="leaky_relu")
+        output_type=activation, activation=activation)
 
     self.left = ConvChain(
         width+width, n_left_outputs, ksize=ksize, width=width,
         depth=num_convs, stride=1, pad=True, normalize=normalize,
         normalization_type=normalization_type,
-        output_type=acitvation, activation=activation)
+        output_type=activation, activation=activation)
 
     if not self.is_last:
       assert num_us is not None
