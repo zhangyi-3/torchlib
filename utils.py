@@ -145,13 +145,18 @@ class Checkpointer(object):
       self.old_epoch_files.append(filename)
 
   # Load init weights from a source checkpoint
-  def override_params(self, filename):
+  def override_params(self, filename, ignore=None):
     ov_chkpt = th.load(filename)
     tgt = self.model.state_dict()
     src = ov_chkpt["state_dict"]
     names = []
+    if ignore is not None:
+      ignore = re.compile(ignore)
+
     for name, param in src.items():
       if name in tgt and tgt[name].shape == param.shape:
+        if ignore is not None and ignore.match(name):
+          continue
         s = "{:10.10s}".format(name)
         s += " {:.2f} ({:.2f})".format(tgt[name].cpu().mean(), tgt[name].cpu().std())
         tgt[name].copy_(param)
