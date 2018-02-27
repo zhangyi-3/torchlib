@@ -332,13 +332,13 @@ class RecurrentAutoencoderLevel(nn.Module):
         num_inputs, width, ksize=ksize, width=width,
         depth=num_convs_pre_hidden, stride=1, pad=pad, normalize=normalize,
         normalization_type=normalization_type,
-        output_type=activation, activation=activation)
+        output_type="relu", activation="relu")
 
     self.left = ConvChain(
-        width+width, n_left_outputs, ksize=ksize, width=width,
+        width + width, n_left_outputs, ksize=ksize, width=width,
         depth=num_convs, stride=1, pad=True, normalize=normalize,
         normalization_type=normalization_type,
-        output_type=activation, activation=activation)
+        output_type="relu", activation="relu")
 
     if not self.is_last:
       assert num_us is not None
@@ -356,6 +356,18 @@ class RecurrentAutoencoderLevel(nn.Module):
           normalization_type=normalization_type,
           activation=activation,
           output_type=output_type)
+
+    self.reset_weights()
+
+  def reset_weights(self):
+    pass
+    # w = self.left.layer_0.layer[0].weight
+    # n_out, n_in, k, k2 = w.shape
+    #
+    # # Set recurrent transform to identity
+    # w.data[:, n_in//2:, :, :] = 0
+    # for i in range(n_out):
+    #   w.data[i, n_in//2 + i, k//2, k2//2] = 1
 
   def forward(self, x, state, encoder_only=False):
     this_state = state.pop()
