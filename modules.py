@@ -127,6 +127,8 @@ class ConvBNRelu(nn.Module):
       act_fn = nn.ReLU
     elif activation == "leaky_relu":
       act_fn = nn.LeakyReLU
+    elif activation == "tanh":
+      act_fn = nn.Tanh
     else:
       raise NotImplemented
 
@@ -140,11 +142,11 @@ class ConvBNRelu(nn.Module):
         raise ValueError("Unkown normalization type {}".format(normalization_type))
       nrm.bias.data.zero_()
       nrm.weight.data.fill_(1.0)
-      self.layer = nn.Sequential(conv, nrm, act_fn(inplace=True))
+      self.layer = nn.Sequential(conv, nrm, act_fn())
     else:
       conv = nn.Conv2d(ninputs, noutputs, ksize, stride=stride, padding=padding)
       conv.bias.data.zero_()
-      self.layer = nn.Sequential(conv, act_fn(inplace=True))
+      self.layer = nn.Sequential(conv, act_fn())
 
     nn.init.xavier_uniform(conv.weight.data, nn.init.calculate_gain(activation))
 
