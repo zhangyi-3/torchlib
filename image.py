@@ -27,4 +27,22 @@ def read_pfm(path):
     data = np.reshape(data, (height, width, nchans))
 
     return data
-  
+
+def write_pfm(path, im):
+  height, width, nchans = im.shape
+  with open(path, 'wb') as fid:
+    if nchans == 1:
+      fid.write(b'Pf\n')
+    elif nchans == 3:
+      fid.write(b'PF\n')
+    else:
+      raise ValueError("Unknown channel count {}".format(nchans))
+
+    # size
+    s = str(width).encode() + b' ' + str(height).encode() + b'\n'
+    fid.write(s)
+
+    # endian
+    fid.write(b'-1\n')
+
+    im.tofile(fid)

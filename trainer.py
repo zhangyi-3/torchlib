@@ -3,6 +3,7 @@ import logging
 
 from tqdm import tqdm
 
+import torch as th
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
@@ -91,6 +92,8 @@ class Trainer(object):
           self.valset, batch_size=self.params.batch_size,
           shuffle=True, num_workers=0, 
           drop_last=True)  # so we have a fixed batch size for averaging in val
+    else:
+      self.val_loader = None
   
     self.log.debug("Model: {}\n".format(model))
     self.log.debug("Parameters to train:")
@@ -111,7 +114,6 @@ class Trainer(object):
     self.log.debug("Epoch ends")
     for c in self.callbacks:
       c.on_epoch_end(self.epoch, logs)
-        # callback.on_epoch_end(epoch, logs, [lowspp, output, target])
 
   def _on_batch_end(self, batch_id, num_batches, logs):
     self.log.debug("Batch ends")
@@ -188,7 +190,7 @@ class Trainer(object):
         val_loss, val_logs = self._run_validation(num_epochs)
         if best_val_loss is None:
           best_val_loss = val_loss
-        if self.checkpointer and val_loss <= best_val_loss:
+        if self.checkpointer and val_loss and val_loss <= best_val_loss:
           self.checkpointer.save_best(self.epoch)
 
         if self.checkpointer is not None:
@@ -199,18 +201,17 @@ class Trainer(object):
 
         if num_epochs > 0 and self.epoch >= num_epochs:
           self.log.info("Ending training at epoch {} of {}".format(self.epoch, num_epochs))
-          break
 
     except KeyboardInterrupt:
       self.log.info("training interrupted")
 
   def _run_validation(self, num_epochs):
     count = self.params.batch_size
-    if self.val_dataloader is None:
+    if self.val_loader is None:
       return None, None
 
     with th.no_grad():
-      model.train(False)
+      self.model.train(False)
       self.averager.reset()
       with tqdm(total=len(self.val_loader), unit=' batches') as pbar:
         pbar.set_description("Epoch {}/{} (val)".format(

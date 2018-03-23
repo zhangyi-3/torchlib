@@ -13,7 +13,7 @@ class Callback(object):
   def on_batch_begin(self, batch, logs):
     pass
 
-  def on_batch_end(self, batch, logs):
+  def on_batch_end(self, batch, num_batches, logs):
     pass
 
   def get_frac(self, batch, num_batches):
@@ -32,4 +32,5 @@ class LossCallback(Callback):
     self.viz.update(frac, logs["loss"], name="train")
 
   def on_epoch_end(self, epoch, logs):
-    self.viz.update(epoch, logs["loss"], name="val")
+    if logs:
+      self.viz.update(epoch, logs["loss"], name="val")
