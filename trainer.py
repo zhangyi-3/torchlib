@@ -7,18 +7,23 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 
 import torchlib.utils as utils
+import torchlib.callbacks as callbacks
 
 class Trainer(object):
   """docstring for Trainer"""
 
   class Parameters(object):
     def __init__(self, optimizer=optim.Adam, 
-                 batch_size=1, lr=1e-4, wd=0, viz_smoothing=0.999):
+                 batch_size=1, lr=1e-4, wd=0, viz_smoothing=0.999,
+                 viz_step=100,
+                 checkpoint_interval=600):
       self.batch_size = batch_size
       self.lr = lr
       self.wd = wd
       self.optimizer = optimizer
       self.viz_smoothing = viz_smoothing
+      self.viz_step = viz_step
+      self.checkpoint_interval = checkpoint_interval
 
   def cuda(self, b):
     self._cuda = b
@@ -28,9 +33,10 @@ class Trainer(object):
         self.criteria[l].cuda()
       self.log.debug("swich to cuda")
 
-  def __init__(self, trainset, model, criteria, checkpointer=None,
-               params=None, metrics=None, cuda=False,
-               callbacks=None, valset=None, verbose=False):
+  def __init__(self, trainset, model, criteria, output=None,
+               model_params=None,
+               params=None, metrics={}, cuda=False,
+               callbacks=[callbacks.LossCallback()], valset=None, verbose=False):
 
     self.verbose = verbose
     self.log = logging.getLogger("trainer")
@@ -49,10 +55,10 @@ class Trainer(object):
 
     self.criteria = criteria
     self.metrics = metrics
-    self.log_keys = criteria.keys()
+    self.log_keys = list(criteria.keys())
 
     if metrics is not None:
-      self.log_keys += metrics.keys()
+      self.log_keys += list(self.metrics.keys())
 
     self.cuda(cuda)
 
@@ -67,6 +73,15 @@ class Trainer(object):
         lr=self.params.lr, 
         weight_decay=self.params.wd)
 
+    if output is not None:
+      self.checkpointer = utils.Checkpointer(
+          output, self.model, self.optimizer,
+          meta_params={"model": model_params},
+          interval=self.params.checkpoint_interval)
+    else:
+      self.checkpointer = None
+
+
     self.train_loader = DataLoader(
       self.trainset, batch_size=self.params.batch_size, 
       shuffle=True, num_workers=4)
@@ -74,118 +89,151 @@ class Trainer(object):
     if self.valset is not None:
       self.val_loader = DataLoader(
           self.valset, batch_size=self.params.batch_size,
-          shuffle=True, num_workers=0)
+          shuffle=True, num_workers=0, 
+          drop_last=True)  # so we have a fixed batch size for averaging in val
   
     self.log.debug("Model: {}\n".format(model))
     self.log.debug("Parameters to train:")
     for n, p in model.named_parameters():
       self.log.debug('  - {}'.format(n))
 
-    self.checkpointer = checkpointer
     if self.checkpointer is None:
       self.log.warn("No checkpointer provided, progress will not be saved.")
+
+    self._set_model()
   
-  def on_epoch_begin(self, epoch):
+  def _on_epoch_begin(self):
     self.log.debug("Epoch begins")
-    # callback.on_epoch_begin(epoch)
-    pass
+    for c in self.callbacks:
+      c.on_epoch_begin(self.epoch)
 
-  def on_epoch_end(self, epoch):
+  def _on_epoch_end(self, logs):
     self.log.debug("Epoch ends")
+    for c in self.callbacks:
+      c.on_epoch_end(self.epoch, logs)
+        # callback.on_epoch_end(epoch, logs, [lowspp, output, target])
 
-  def _train_one_epoch(self, epoch, num_epochs):
-      self.model.train(True)
-      with tqdm(total=len(self.train_loader), unit=' batches') as pbar:
-        pbar.set_description("Epoch {}/{}".format(
-          epoch+1, num_epochs if num_epochs > 0 else "--"))
+  def _on_batch_end(self, batch_id, num_batches, logs):
+    self.log.debug("Batch ends")
+    for c in self.callbacks:
+      c.on_batch_end(batch_id, num_batches, logs)
 
-        for batch_id, batch in enumerate(self.train_loader):
+  def _train_one_epoch(self, num_epochs):
+    self.model.train(True)
+    with tqdm(total=len(self.train_loader), unit=' batches') as pbar:
+      pbar.set_description("Epoch {}/{}".format(
+        self.epoch+1, num_epochs if num_epochs > 0 else "--"))
+
+      for batch_id, batch in enumerate(self.train_loader):
+        batch_v = utils.make_variable(batch, cuda=self._cuda)
+        self.optimizer.zero_grad()
+
+        start = time.time()
+        output = self.model(batch_v)
+
+        elapsed = (time.time() - start)*1000.0
+        self.log.debug("Forward {:.1f} ms".format(elapsed))
+
+        # Compute all losses
+        c_out = []
+        for k in self.criteria.keys():
+          c_out.append(self.criteria[k](batch_v, output))
+        loss = sum(c_out)
+        self.ema.update("loss", loss.cpu().data.item())
+
+        # Compute all metrics
+        for k in self.metrics.keys():
+          m = self.metrics[k](batch_v, output)
+          self.ema.update(k, m.cpu().data.item())
+
+        loss.backward()
+
+        self.optimizer.step()
+
+        logs = {k: self.ema[k] for k in self.log_keys}
+        pbar.set_postfix(logs)
+
+        if pbar.n % self.params.viz_step == 0:
+          self._on_batch_end(batch_id, len(self.train_loader), logs)
+
+        pbar.update(1)
+
+  def _set_model(self):
+    if self.checkpointer:
+      chkpt_name, epoch = self.checkpointer.load_latest()
+      if chkpt_name is None:
+        self.log.info("Starting training from scratch")
+      else:
+        self.log.info("Resuming from latest checkpoint {}.".format(chkpt_name))
+    else:
+      epoch = 0
+    self.epoch = epoch
+
+  def override_parameters(self, checkpoint):
+    if checkpoint and self.checkpointer:
+      self.log.info("Overriding parameters:")
+      names = self.checkpointer.override_params(args.checkpoint)
+      for n in names:
+        self.log.info("  - {}".format(n))
+
+  def train(self, num_epochs=-1):
+    best_val_loss = None
+    try:
+      while True:
+        # Training
+        self._on_epoch_begin() 
+        self._train_one_epoch(num_epochs)
+
+        # Validation
+        val_loss, val_logs = self._run_validation(num_epochs)
+        if best_val_loss is None:
+          best_val_loss = val_loss
+        if self.checkpointer and val_loss <= best_val_loss:
+          self.checkpointer.save_best(self.epoch)
+
+        if self.checkpointer is not None:
+          self.checkpointer.periodic_checkpoint(self.epoch)
+        self.epoch += 1
+
+        self._on_epoch_end(val_logs) 
+
+        if num_epochs > 0 and self.epoch >= num_epochs:
+          self.log.info("Ending training at epoch {} of {}".format(self.epoch, num_epochs))
+          break
+
+    except KeyboardInterrupt:
+      self.log.info("training interrupted")
+
+  def _run_validation(self, num_epochs):
+    count = self.params.batch_size
+    if self.val_dataloader is None:
+      return None, None
+
+    with th.no_grad():
+      model.train(False)
+      self.averager.reset()
+      with tqdm(total=len(self.val_loader), unit=' batches') as pbar:
+        pbar.set_description("Epoch {}/{} (val)".format(
+          self.epoch+1, num_epochs if num_epochs > 0 else "--"))
+        for batch_id, batch in enumerate(self.val_loader):
           batch_v = utils.make_variable(batch, cuda=self._cuda)
-          self.optimizer.zero_grad()
-
-          start = time.time()
           output = self.model(batch_v)
-
-          elapsed = (time.time() - start)*1000.0
-          self.log.debug("Forward {:.1f} ms".format(elapsed))
 
           # Compute all losses
           c_out = []
           for k in self.criteria.keys():
             c_out.append(self.criteria[k](batch_v, output))
           loss = sum(c_out)
-          self.ema.update("loss", loss.cpu().data.item())
+          self.averager.update("loss", loss.cpu().data.item(), count)
 
           # Compute all metrics
-          # rmse = rmse_fn(output, target)
-          # self.ema.update("rmse", rmse.cpu().data.item())
+          for k in self.metrics.keys():
+            m = self.metrics[k](batch_v, output)
+            self.averager.update(k, m.cpu().data.item())
 
-          loss.backward()
-
-          self.optimizer.step()
-
-          # if pbar.n % self.viz_step == 0:
-          #   self.on_batch_end(batch_id, logs)
-
-          logs = {k: self.ema[k] for k in self.log_keys}
-          pbar.set_postfix(logs)
           pbar.update(1)
 
-  def train(self, num_epochs=-1):
-    epoch = 0
-    try:
-      while True:
-        # Training
-        self.on_epoch_begin(epoch) 
-        self._train_one_epoch(epoch, num_epochs)
-        self.on_epoch_end(epoch) 
+          logs = {k: self.averager[k] for k in self.log_keys}
+          pbar.set_postfix(logs)
 
-        # Validation
-        self._run_validation(epoch, num_epochs)
-
-        # checkpointer.periodic_checkpoint(epoch)
-        epoch += 1
-
-        if num_epochs > 0 and epoch >= num_epochs:
-          self.log.info("Ending training at epoch {} of {}".format(epoch, num_epochs))
-          break
-
-    except KeyboardInterrupt:
-      self.log.info("training interrupted")
-
-  def _run_validation(self, epoch, num_epochs):
-    if self.val_dataloader is not None:
-      with th.no_grad():
-        model.train(False)
-        self.averager.reset()
-        with tqdm(total=len(self.val_loader), unit=' batches') as pbar:
-          pbar.set_description("Epoch {}/{} (val)".format(
-            epoch+1, num_epochs if num_epochs > 0 else "--"))
-          for batch_id, batch in enumerate(self.val_loader):
-            batch_v = utils.make_variable(batch, cuda=self._cuda)
-            output = self.model(batch_v)
-
-            # Compute all losses
-            c_out = []
-            for k in self.criteria.keys():
-              c_out.append(self.criteria[k](batch_v, output))
-            loss = sum(c_out)
-
-            # count = target.shape[0]
-    #         val_average.update("loss", loss.data.item(), count)
-    #         val_average.update("rmse", rmse.data.item(), count)
-    #         pbar.update(1)
-    #
-    #     logs = {k: val_average[k] for k in log_keys}
-    #     pbar.set_postfix(logs)
-    #
-    #     lowspp = crop_like(batch_v['low_spp'], output)
-    #
-    #     callback.on_epoch_end(epoch, logs, [lowspp, output, target])
-    #
-    #     if best_val_loss is None:
-    #       best_val_loss = val_average['loss']
-    #
-    #     if val_average['loss'] <= best_val_loss:
-    #       checkpointer.save_best(epoch)
-
+        return self.averager["loss"], logs
