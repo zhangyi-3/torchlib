@@ -198,3 +198,16 @@ class Averager(object):
   def update(self, key, value, count=1):
     self.values[key] += value*count
     self.counts[key] += count
+
+class Timer(object):
+  def __init__(self, header=""):
+    self.header = header
+    self.time = 0
+
+  def __enter__(self):
+    self.time = time.time()
+
+  def __exit__(self, tpye, value, traceback):
+    elapsed = (time.time()-self.time)*1000
+    print("{}, {:.1f}ms".format(self.header, elapsed))
+
