@@ -11,9 +11,6 @@ import re
 def make_variable(d, cuda=True):
   ret = {}
   for k in d.keys():
-    if "Tensor" not in type(d[k]).__name__:
-      ret[k] = d[k]
-      continue
     if cuda:
       ret[k] = Variable(d[k].cuda())
     else:
@@ -59,6 +56,11 @@ class Checkpointer(object):
 
     if directory.startswith('~'):
         directory = os.path.expanduser(directory)
+
+    # self.log.debug("Creating output directory {}".format(output))
+    if not os.path.exists(directory):
+      os.makedirs(directory)
+
     self.model = model
     self.optimizer = optimizer
     self.max_save = max_save
