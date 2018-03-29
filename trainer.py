@@ -57,6 +57,7 @@ class Trainer(object):
     self.criteria = criteria
     self.metrics = metrics
     self.log_keys = list(criteria.keys())
+    self.log_keys.append("loss")
 
     if metrics is not None:
       self.log_keys += list(self.metrics.keys())
@@ -81,7 +82,6 @@ class Trainer(object):
           interval=self.params.checkpoint_interval)
     else:
       self.checkpointer = None
-
 
     self.train_loader = DataLoader(
       self.trainset, batch_size=self.params.batch_size, 
@@ -111,6 +111,9 @@ class Trainer(object):
       c.on_epoch_begin(self.epoch)
 
   def _on_epoch_end(self, logs):
+    if logs is None:
+      return
+
     self.log.debug("Epoch ends")
     for c in self.callbacks:
       c.on_epoch_end(self.epoch, logs)
@@ -209,6 +212,7 @@ class Trainer(object):
     count = self.params.batch_size
     if self.val_loader is None:
       return None, None
+
 
     with th.no_grad():
       self.model.train(False)
