@@ -210,9 +210,10 @@ class Trainer(object):
 
   def _run_validation(self, num_epochs):
     count = self.params.batch_size
-    if self.val_loader is None:
-      return None, None
+    logs = None
 
+    if self.val_loader is None:
+      return None, logs
 
     with th.no_grad():
       self.model.train(False)
