@@ -11,7 +11,7 @@ import torchlib.utils as utils
 import torchlib.callbacks as callbacks
 
 class Trainer(object):
-  """docstring for Trainer"""
+  """Trainer"""
 
   class Parameters(object):
     def __init__(self, optimizer=optim.Adam, 
@@ -37,7 +37,8 @@ class Trainer(object):
   def __init__(self, trainset, model, criteria, output=None,
                model_params=None,
                params=None, metrics={}, cuda=False,
-               callbacks=[callbacks.LossCallback()], valset=None, verbose=False):
+               callbacks=[callbacks.LossCallback()], valset=None, 
+               verbose=False):
 
     self.verbose = verbose
     self.log = logging.getLogger("trainer")
@@ -56,7 +57,7 @@ class Trainer(object):
 
     self.criteria = criteria
     self.metrics = metrics
-    self.log_keys = list(criteria.keys())
+    self.log_keys = list(criteria.keys()) + ["loss"]
 
     if metrics is not None:
       self.log_keys += list(self.metrics.keys())
@@ -139,7 +140,9 @@ class Trainer(object):
         # Compute all losses
         c_out = []
         for k in self.criteria.keys():
-          c_out.append(self.criteria[k](batch_v, output))
+          crit = self.criteria[k](batch_v, output)
+          c_out.append(crit)
+          self.ema.update(k, crit.cpu().data.item())
         loss = sum(c_out)
         self.ema.update("loss", loss.cpu().data.item())
 
@@ -200,7 +203,8 @@ class Trainer(object):
         self._on_epoch_end(val_logs) 
 
         if num_epochs > 0 and self.epoch >= num_epochs:
-          self.log.info("Ending training at epoch {} of {}".format(self.epoch, num_epochs))
+          self.log.info("Ending training at epoch {} of {}".format(
+            self.epoch, num_epochs))
 
     except KeyboardInterrupt:
       self.log.info("training interrupted")
@@ -213,6 +217,7 @@ class Trainer(object):
     with th.no_grad():
       self.model.train(False)
       self.averager.reset()
+      logs = None
       with tqdm(total=len(self.val_loader), unit=' batches') as pbar:
         pbar.set_description("Epoch {}/{} (val)".format(
           self.epoch+1, num_epochs if num_epochs > 0 else "--"))
@@ -223,7 +228,9 @@ class Trainer(object):
           # Compute all losses
           c_out = []
           for k in self.criteria.keys():
-            c_out.append(self.criteria[k](batch_v, output))
+            crit = self.criteria[k](batch_v, output)
+            c_out.append(crit)
+            self.averager.update(k, crit.cpu().data.item())
           loss = sum(c_out)
           self.averager.update("loss", loss.cpu().data.item(), count)
 

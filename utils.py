@@ -190,6 +190,8 @@ class Averager(object):
     self.counts = {k: 0 for k in keys}
 
   def __getitem__(self, key):
+    if self.counts[key] == 0:
+      return 0.0
     return self.values[key] * 1.0/self.counts[key]
 
   def reset(self):

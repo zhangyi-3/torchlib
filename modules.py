@@ -357,18 +357,6 @@ class RecurrentAutoencoderLevel(nn.Module):
           activation=activation,
           output_type=output_type)
 
-    self.reset_weights()
-
-  def reset_weights(self):
-    pass
-    # w = self.left.layer_0.layer[0].weight
-    # n_out, n_in, k, k2 = w.shape
-    #
-    # # Set recurrent transform to identity
-    # w.data[:, n_in//2:, :, :] = 0
-    # for i in range(n_out):
-    #   w.data[i, n_in//2 + i, k//2, k2//2] = 1
-
   def forward(self, x, state, encoder_only=False):
     this_state = state.pop()
     pre_hidden = self.pre_hidden(x)
