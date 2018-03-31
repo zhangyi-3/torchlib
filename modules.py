@@ -4,6 +4,7 @@ import numpy as np
 import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
+
 from torch.autograd import Variable
 
 from torchlib.image import crop_like
@@ -248,7 +249,7 @@ class RecurrentAutoencoder(nn.Module):
                num_convs_pre_hidden=1, num_convs=2, 
                max_width=512, increase_factor=1.0, 
                normalize=False, normalization_type="batch",
-               activation="leaky_relu",
+               activation="leaky_relu", recurrent_activation="leaky_relu",
                output_type="linear", pooling="max", pad=True):
     super(RecurrentAutoencoder, self).__init__()
 
@@ -282,6 +283,7 @@ class RecurrentAutoencoder(nn.Module):
       next_level = RecurrentAutoencoderLevel(
           n_in, n_out, next_level=next_level, num_us=n_us,
           ksize=ksize, width=w, num_convs=num_convs, num_convs_pre_hidden=num_convs_pre_hidden,
+          recurrent_activation=recurrent_activation,
           output_type=o_type, normalize=normalize, activation=activation,
           normalization_type=normalization_type, pooling=pooling, pad=pad)
 
@@ -311,7 +313,7 @@ class RecurrentAutoencoderLevel(nn.Module):
   def __init__(self, num_inputs, num_outputs, next_level=None,
                num_us=None,
                ksize=3, width=64, num_convs=2, num_convs_pre_hidden=1,
-               activation="relu", output_type="linear",
+               activation="leaky_relu", output_type="linear", recurrent_activation="leaky_relu",
                normalize=True, normalization_type="batch", pooling="max",
                pad=True):
     super(RecurrentAutoencoderLevel, self).__init__()
@@ -332,13 +334,14 @@ class RecurrentAutoencoderLevel(nn.Module):
         num_inputs, width, ksize=ksize, width=width,
         depth=num_convs_pre_hidden, stride=1, pad=pad, normalize=normalize,
         normalization_type=normalization_type,
-        output_type="relu", activation="relu")
+        output_type=activation, activation=activation)
 
     self.left = ConvChain(
         width + width, n_left_outputs, ksize=ksize, width=width,
         depth=num_convs, stride=1, pad=True, normalize=normalize,
         normalization_type=normalization_type,
-        output_type="relu", activation="relu")
+        output_type=recurrent_activation, activation=activation)
+
 
     if not self.is_last:
       assert num_us is not None
