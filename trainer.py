@@ -17,7 +17,7 @@ class Trainer(object):
     def __init__(self, optimizer=optim.Adam, 
                  batch_size=1, lr=1e-4, wd=0, viz_smoothing=0.999,
                  viz_step=100,
-                 checkpoint_interval=600):
+                 checkpoint_interval=60):
       self.batch_size = batch_size
       self.lr = lr
       self.wd = wd
@@ -163,6 +163,9 @@ class Trainer(object):
 
         pbar.update(1)
 
+        if self.checkpointer is not None:
+          self.checkpointer.periodic_checkpoint(self.epoch)
+
   def _set_model(self):
     if self.checkpointer:
       chkpt_name, epoch = self.checkpointer.load_latest()
@@ -196,8 +199,6 @@ class Trainer(object):
         if self.checkpointer and val_loss and val_loss <= best_val_loss:
           self.checkpointer.save_best(self.epoch)
 
-        if self.checkpointer is not None:
-          self.checkpointer.periodic_checkpoint(self.epoch)
         self.epoch += 1
 
         self._on_epoch_end(val_logs) 
