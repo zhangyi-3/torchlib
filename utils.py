@@ -8,13 +8,13 @@ log = logging.getLogger(__name__)
 import os
 import re
 
-def make_variable(d, cuda=True):
+def make_variable(d, cuda=True, async=False):
   ret = {}
   for k in d.keys():
-    if cuda:
-      ret[k] = Variable(d[k].cuda())
+    if cuda and hasattr(d[k], "cuda"):
+      ret[k] = d[k].cuda(non_blocking=async)
     else:
-      ret[k] = Variable(d[k])
+      ret[k] = d[k]
   return ret
 
 
