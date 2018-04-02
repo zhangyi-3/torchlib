@@ -11,13 +11,13 @@ import torchlib.utils as utils
 import torchlib.callbacks as callbacks
 
 class Trainer(object):
-  """docstring for Trainer"""
+  """Trainer"""
 
   class Parameters(object):
     def __init__(self, optimizer=optim.Adam, 
                  batch_size=1, lr=1e-4, wd=0, viz_smoothing=0.999,
                  viz_step=100,
-                 checkpoint_interval=600):
+                 checkpoint_interval=60):
       self.batch_size = batch_size
       self.lr = lr
       self.wd = wd
@@ -37,7 +37,8 @@ class Trainer(object):
   def __init__(self, trainset, model, criteria, output=None,
                model_params=None,
                params=None, metrics={}, cuda=False,
-               callbacks=[callbacks.LossCallback()], valset=None, verbose=False):
+               callbacks=[callbacks.LossCallback()], valset=None, 
+               verbose=False):
 
     self.verbose = verbose
     self.log = logging.getLogger("trainer")
@@ -56,7 +57,7 @@ class Trainer(object):
 
     self.criteria = criteria
     self.metrics = metrics
-    self.log_keys = list(criteria.keys())
+    self.log_keys = list(criteria.keys()) + ["loss"]
 
     if metrics is not None:
       self.log_keys += list(self.metrics.keys())
@@ -81,7 +82,6 @@ class Trainer(object):
           interval=self.params.checkpoint_interval)
     else:
       self.checkpointer = None
-
 
     self.train_loader = DataLoader(
       self.trainset, batch_size=self.params.batch_size, 
@@ -111,6 +111,9 @@ class Trainer(object):
       c.on_epoch_begin(self.epoch)
 
   def _on_epoch_end(self, logs):
+    if logs is None:
+      return
+
     self.log.debug("Epoch ends")
     for c in self.callbacks:
       c.on_epoch_end(self.epoch, logs)
@@ -139,7 +142,9 @@ class Trainer(object):
         # Compute all losses
         c_out = []
         for k in self.criteria.keys():
-          c_out.append(self.criteria[k](batch_v, output))
+          crit = self.criteria[k](batch_v, output)
+          c_out.append(crit)
+          self.ema.update(k, crit.cpu().data.item())
         loss = sum(c_out)
         self.ema.update("loss", loss.cpu().data.item())
 
@@ -159,6 +164,9 @@ class Trainer(object):
           self._on_batch_end(batch_id, len(self.train_loader), logs)
 
         pbar.update(1)
+
+        if self.checkpointer is not None:
+          self.checkpointer.periodic_checkpoint(self.epoch)
 
   def _set_model(self):
     if self.checkpointer:
@@ -193,26 +201,28 @@ class Trainer(object):
         if self.checkpointer and val_loss and val_loss <= best_val_loss:
           self.checkpointer.save_best(self.epoch)
 
-        if self.checkpointer is not None:
-          self.checkpointer.periodic_checkpoint(self.epoch)
         self.epoch += 1
 
         self._on_epoch_end(val_logs) 
 
         if num_epochs > 0 and self.epoch >= num_epochs:
-          self.log.info("Ending training at epoch {} of {}".format(self.epoch, num_epochs))
+          self.log.info("Ending training at epoch {} of {}".format(
+            self.epoch, num_epochs))
 
     except KeyboardInterrupt:
       self.log.info("training interrupted")
 
   def _run_validation(self, num_epochs):
     count = self.params.batch_size
+    logs = None
+
     if self.val_loader is None:
-      return None, None
+      return None, logs
 
     with th.no_grad():
       self.model.train(False)
       self.averager.reset()
+      logs = None
       with tqdm(total=len(self.val_loader), unit=' batches') as pbar:
         pbar.set_description("Epoch {}/{} (val)".format(
           self.epoch+1, num_epochs if num_epochs > 0 else "--"))
@@ -223,7 +233,9 @@ class Trainer(object):
           # Compute all losses
           c_out = []
           for k in self.criteria.keys():
-            c_out.append(self.criteria[k](batch_v, output))
+            crit = self.criteria[k](batch_v, output)
+            c_out.append(crit)
+            self.averager.update(k, crit.cpu().data.item())
           loss = sum(c_out)
           self.averager.update("loss", loss.cpu().data.item(), count)
 
