@@ -1,6 +1,7 @@
 import logging
 import torch as th
 from torch.autograd import Variable
+import numpy as np
 import time
 
 log = logging.getLogger(__name__)
@@ -203,6 +204,7 @@ class Averager(object):
     self.values[key] += value*count
     self.counts[key] += count
 
+
 class Timer(object):
   def __init__(self, header=""):
     self.header = header
@@ -215,3 +217,23 @@ class Timer(object):
     elapsed = (time.time()-self.time)*1000
     print("{}, {:.1f}ms".format(self.header, elapsed))
 
+def params2image(p):
+  p = p.cpu().numpy()
+  mu = p.mean()
+  std = p.std()
+  if std > 0:
+    p = (p-mu) / (2*std)
+  if len(p.shape) == 4:
+    # conv
+    p = np.pad(p, (
+      (0, 0),
+      (0, 0),
+      (0, 1),
+      (0, 1),
+      ), 'constant')
+    co, ci, kh, kw = p.shape
+
+    p = np.reshape(np.transpose(p, [0, 2, 1, 3]), [co*kh, ci*kw])
+
+  p = np.clip(0.5*(p + 1.0), 0, 1)
+  return p
