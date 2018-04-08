@@ -29,6 +29,7 @@ def read_pfm(path):
     return data
 
 def write_pfm(path, im):
+  assert im.dtype == np.float32, "pfm image should be float32"
   height, width, nchans = im.shape
   with open(path, 'wb') as fid:
     if nchans == 1:
