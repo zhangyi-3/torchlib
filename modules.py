@@ -25,7 +25,7 @@ class FullyConnected(nn.Module):
         _in = width
       if normalize:
         fc = nn.Linear(_in, width, bias=False)
-        nn.init.xavier_uniform(fc.weight.data, nn.init.calculate_gain('relu'))
+        nn.init.xavier_uniform_(fc.weight.data, nn.init.calculate_gain('relu'))
         raise ValueError("check batchnorm correctness in FC torchlib")
         bn = nn.BatchNorm1d(width)
         bn.bias.data.zero_()
@@ -35,7 +35,7 @@ class FullyConnected(nn.Module):
       else:
         fc = nn.Linear(_in, width, bias=True)
         fc.bias.data.zero_()
-        nn.init.xavier_uniform(fc.weight.data, nn.init.calculate_gain('relu'))
+        nn.init.xavier_uniform_(fc.weight.data, nn.init.calculate_gain('relu'))
         layers.append(fc)
       layers.append(nn.ReLU(inplace=True))
 
@@ -45,7 +45,7 @@ class FullyConnected(nn.Module):
       _in = ninputs
     fc = nn.Linear(_in, noutputs)
     fc.bias.data.zero_()
-    nn.init.xavier_uniform(fc.weight.data)
+    nn.init.xavier_uniform_(fc.weight.data)
     layers.append(fc)
 
     self.net = nn.Sequential(*layers)
@@ -88,7 +88,7 @@ class ConvChain(nn.Module):
 
     conv = nn.Conv2d(_in, noutputs, ksize, bias=True, padding=padding)
     conv.bias.data.zero_()
-    nn.init.xavier_uniform(
+    nn.init.xavier_uniform_(
         conv.weight.data, nn.init.calculate_gain(output_type))
     layers.append(conv)
 
@@ -149,7 +149,7 @@ class ConvBNRelu(nn.Module):
       conv.bias.data.zero_()
       self.layer = nn.Sequential(conv, act_fn())
 
-    nn.init.xavier_uniform(conv.weight.data, nn.init.calculate_gain(activation))
+    nn.init.xavier_uniform_(conv.weight.data, nn.init.calculate_gain(activation))
 
   def forward(self, x):
     out = self.layer(x)
@@ -161,10 +161,9 @@ class Autoencoder(nn.Module):
                num_convs=2, max_width=512, increase_factor=1.0, 
                normalize=False, normalization_type="batch", 
                output_type="linear",
-               activation="relu", pooling="conv"):
+               activation="relu", pooling="max"):
     super(Autoencoder, self).__init__()
     
-    assert pooling in ["max"]
 
     next_level = None
     for lvl in range(num_levels-1, -1, -1):
@@ -198,7 +197,7 @@ class AutoencoderLevel(nn.Module):
   def __init__(self, num_inputs, num_outputs, next_level=None,
                num_us=None,
                ksize=3, width=64, num_convs=2, output_type="linear",
-               normalize=True, normalization_type="batch", pooling="conv",
+               normalize=True, normalization_type="batch", pooling="max",
                activation="relu"):
     super(AutoencoderLevel, self).__init__()
 
@@ -220,6 +219,10 @@ class AutoencoderLevel(nn.Module):
           output_type=activation, activation=activation)
       if pooling == "max":
         self.downsample = nn.MaxPool2d(2, 2)
+      elif pooling == "average":
+        self.downsample = nn.AvgPool2d(2, 2)
+      elif pooling == "conv":
+        self.downsample = nn.Conv2d(width, width, 2, stride=2)
       else:
         raise ValueError("unknown pooling'{}'".format(pooling))
 
