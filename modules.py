@@ -348,6 +348,10 @@ class RecurrentAutoencoderLevel(nn.Module):
 
       if pooling == "max":
         self.downsample = nn.MaxPool2d(2, 2)
+      elif pooling == "average":
+        self.downsample = nn.AvgPool2d(2, 2)
+      elif pooling == "conv":
+        self.downsample = nn.Conv2d(n_left_outputs, n_left_outputs, 2, stride=2)
       else:
         raise ValueError("unknown pooling'{}'".format(pooling))
 
