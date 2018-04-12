@@ -9,6 +9,8 @@ from torch.autograd import Variable
 
 from torchlib.image import crop_like
 
+import rendernet.utils as rutils
+
 class FullyConnected(nn.Module):
   def __init__(self, ninputs, noutputs, width=32, depth=3, 
                normalize=False, dropout=False):
@@ -88,8 +90,12 @@ class ConvChain(nn.Module):
 
     conv = nn.Conv2d(_in, noutputs, ksize, bias=True, padding=padding)
     conv.bias.data.zero_()
-    nn.init.xavier_uniform_(
-        conv.weight.data, nn.init.calculate_gain(output_type))
+    if output_type == "elu":
+      nn.init.xavier_uniform_(
+          conv.weight.data, nn.init.calculate_gain("relu"))
+    else:
+      nn.init.xavier_uniform_(
+          conv.weight.data, nn.init.calculate_gain(output_type))
     layers.append(conv)
 
     # Rename layers
@@ -110,6 +116,8 @@ class ConvChain(nn.Module):
       self.add_module("output_activation", nn.Sigmoid())
     elif output_type == "tanh":
       self.add_module("output_activation", nn.Tanh())
+    elif output_type == "elu":
+      self.add_module("output_activation", nn.ELU())
     else:
       raise ValueError("Unknon output type '{}'".format(output_type))
 
@@ -130,6 +138,8 @@ class ConvBNRelu(nn.Module):
       act_fn = nn.LeakyReLU
     elif activation == "tanh":
       act_fn = nn.Tanh
+    elif activation == "elu":
+      act_fn = nn.ELU
     else:
       raise NotImplemented
 
@@ -149,7 +159,10 @@ class ConvBNRelu(nn.Module):
       conv.bias.data.zero_()
       self.layer = nn.Sequential(conv, act_fn())
 
-    nn.init.xavier_uniform_(conv.weight.data, nn.init.calculate_gain(activation))
+    if activation == "elu":
+      nn.init.xavier_uniform_(conv.weight.data, nn.init.calculate_gain("relu"))
+    else:
+      nn.init.xavier_uniform_(conv.weight.data, nn.init.calculate_gain(activation))
 
   def forward(self, x):
     out = self.layer(x)
@@ -256,8 +269,8 @@ class RecurrentAutoencoder(nn.Module):
                output_type="linear", pooling="max", pad=True):
     super(RecurrentAutoencoder, self).__init__()
 
-    if not pad:
-      raise ValueError("rnn with no padding is not tested!")
+    # if not pad:
+    #   raise ValueError("rnn with no padding is not tested!")
 
     self.num_levels = num_levels
     self.width = width
@@ -288,7 +301,7 @@ class RecurrentAutoencoder(nn.Module):
           ksize=ksize, width=w, num_convs=num_convs, num_convs_pre_hidden=num_convs_pre_hidden,
           recurrent_activation=recurrent_activation,
           output_type=o_type, normalize=normalize, activation=activation,
-          normalization_type=normalization_type, pooling=pooling, pad=pad)
+          normalization_type=normalization_type, pooling=pooling, pad=pad, lvl=lvl)
 
     self.add_module("net", next_level)
 
@@ -318,11 +331,15 @@ class RecurrentAutoencoderLevel(nn.Module):
                ksize=3, width=64, num_convs=2, num_convs_pre_hidden=1,
                activation="leaky_relu", output_type="linear", recurrent_activation="leaky_relu",
                normalize=True, normalization_type="batch", pooling="max",
-               pad=True):
+               pad=True, lvl=-1):
     super(RecurrentAutoencoderLevel, self).__init__()
 
-    if not pad:
-      raise ValueError("rnn with no padding is not tested!")
+    self.lvl = lvl
+    self.debug = rutils.DebugFeatureVisualizer(
+        ["output_{}".format(lvl)], period=10)
+
+    # if not pad:
+    #   raise ValueError("rnn with no padding is not tested!")
 
     self.is_last = (next_level is None)
     self.pad = pad
@@ -339,14 +356,21 @@ class RecurrentAutoencoderLevel(nn.Module):
         normalization_type=normalization_type,
         output_type=activation, activation=activation)
 
+    # TODO: ksize
     self.left = ConvChain(
-        width + width, n_left_outputs, ksize=ksize, width=width,
+        width + width, n_left_outputs, ksize=1, width=width,
         depth=num_convs, stride=1, pad=True, normalize=normalize,
         normalization_type=normalization_type,
         output_type=recurrent_activation, activation=activation)
 
-
-    if not self.is_last:
+    if self.is_last:
+      self.right = ConvChain(
+          width, num_outputs, ksize=ksize, width=width,
+          depth=num_convs, stride=1, pad=pad, normalize=normalize,
+          normalization_type=normalization_type,
+          activation=activation,
+          output_type=output_type)
+    else:
       assert num_us is not None
 
       if pooling == "max":
@@ -360,8 +384,14 @@ class RecurrentAutoencoderLevel(nn.Module):
 
       self.next_level = next_level
       self.upsample = nn.Upsample(scale_factor=2, mode="nearest")
+      self.pre_right = ConvChain(
+          num_us, width, ksize=ksize, width=width,
+          depth=num_convs, stride=1, pad=pad, normalize=normalize,
+          normalization_type=normalization_type,
+          activation=activation,
+          output_type=output_type)
       self.right = ConvChain(
-          num_us + width, num_outputs, ksize=ksize, width=width,
+          2*width, num_outputs, ksize=ksize, width=width,
           depth=num_convs, stride=1, pad=pad, normalize=normalize,
           normalization_type=normalization_type,
           activation=activation,
@@ -374,16 +404,21 @@ class RecurrentAutoencoderLevel(nn.Module):
     new_state = self.left(th.cat([pre_hidden, this_state], 1))  # this is also the new hidden state
 
     if self.is_last:
-      return new_state, [new_state]
+      output = self.right(new_state)
+      next_state = [new_state]
+    else:
+      ds = self.downsample(new_state)
+      next_level, next_state = self.next_level(ds, state)
+      next_state.append(new_state)
 
-    ds = self.downsample(new_state)
-    next_level, next_state = self.next_level(ds, state)
-    next_state.append(new_state)
+      if encoder_only: # only compute the internal recurrent state
+        return None, next_state
 
-    if encoder_only: # only compute the internal recurrent state
-      return None, next_state
+      us = self.upsample(next_level)
+      us_f = self.pre_right(us)
+      concat = th.cat([us_f, new_state], 1)
+      output = self.right(concat)
 
-    us = self.upsample(next_level)
-    concat = th.cat([us, new_state], 1)
-    output = self.right(concat)
+    self.debug.update("output_{}".format(self.lvl), output)
+    self.debug.step()
     return output, next_state
