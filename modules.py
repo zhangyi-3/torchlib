@@ -89,6 +89,7 @@ class ConvChain(nn.Module):
       _in = ninputs
 
     conv = nn.Conv2d(_in, noutputs, ksize, bias=True, padding=padding)
+    conv = nn.utils.weight_norm(conv)  # TODO
     conv.bias.data.zero_()
     if output_type == "elu":
       nn.init.xavier_uniform_(
@@ -156,6 +157,7 @@ class ConvBNRelu(nn.Module):
       self.layer = nn.Sequential(conv, nrm, act_fn())
     else:
       conv = nn.Conv2d(ninputs, noutputs, ksize, stride=stride, padding=padding)
+      conv = nn.utils.weight_norm(conv)  # TODO
       conv.bias.data.zero_()
       self.layer = nn.Sequential(conv, act_fn())
 
@@ -262,15 +264,16 @@ class AutoencoderLevel(nn.Module):
 
 class RecurrentAutoencoder(nn.Module):
   def __init__(self, ninputs, noutputs, ksize=3, width=64, num_levels=3, 
-               num_convs_pre_hidden=1, num_convs=2, 
+               num_convs_state=1, num_convs=2, 
                max_width=512, increase_factor=1.0, 
                normalize=False, normalization_type="batch",
                activation="leaky_relu", recurrent_activation="leaky_relu",
-               output_type="linear", pooling="max", pad=True):
+               output_type="linear", pooling="max", pad=True,
+               temporal_ksize=None):
     super(RecurrentAutoencoder, self).__init__()
 
-    # if not pad:
-    #   raise ValueError("rnn with no padding is not tested!")
+    if not pad:
+      raise ValueError("rnn with no padding is not tested!")
 
     self.num_levels = num_levels
     self.width = width
@@ -278,7 +281,7 @@ class RecurrentAutoencoder(nn.Module):
     self.increase_factor = increase_factor
     self.ksize = ksize
     self.num_convs = num_convs
-    self.num_convs_pre_hidden = num_convs_pre_hidden
+    self.num_convs_state = num_convs_state
     self.pad = pad
 
     next_level = None
@@ -298,10 +301,11 @@ class RecurrentAutoencoder(nn.Module):
 
       next_level = RecurrentAutoencoderLevel(
           n_in, n_out, next_level=next_level, num_us=n_us,
-          ksize=ksize, width=w, num_convs=num_convs, num_convs_pre_hidden=num_convs_pre_hidden,
+          ksize=ksize, width=w, num_convs=num_convs, num_convs_state=num_convs_state,
           recurrent_activation=recurrent_activation,
           output_type=o_type, normalize=normalize, activation=activation,
-          normalization_type=normalization_type, pooling=pooling, pad=pad, lvl=lvl)
+          normalization_type=normalization_type, pooling=pooling, pad=pad, lvl=lvl,
+          temporal_ksize=temporal_ksize)
 
     self.add_module("net", next_level)
 
@@ -328,18 +332,21 @@ class RecurrentAutoencoder(nn.Module):
 class RecurrentAutoencoderLevel(nn.Module):
   def __init__(self, num_inputs, num_outputs, next_level=None,
                num_us=None,
-               ksize=3, width=64, num_convs=2, num_convs_pre_hidden=1,
+               ksize=3, width=64, num_convs=2, num_convs_state=1,
                activation="leaky_relu", output_type="linear", recurrent_activation="leaky_relu",
                normalize=True, normalization_type="batch", pooling="max",
-               pad=True, lvl=-1):
+               pad=True, lvl=-1, temporal_ksize=None):
     super(RecurrentAutoencoderLevel, self).__init__()
 
     self.lvl = lvl
     self.debug = rutils.DebugFeatureVisualizer(
         ["output_{}".format(lvl)], period=10)
 
-    # if not pad:
-    #   raise ValueError("rnn with no padding is not tested!")
+    if temporal_ksize is None:
+      temporal_ksize=ksize
+
+    if not pad:
+      raise ValueError("rnn with no padding is not tested!")
 
     self.is_last = (next_level is None)
     self.pad = pad
@@ -352,14 +359,13 @@ class RecurrentAutoencoderLevel(nn.Module):
 
     self.pre_hidden = ConvChain(
         num_inputs, width, ksize=ksize, width=width,
-        depth=num_convs_pre_hidden, stride=1, pad=pad, normalize=normalize,
+        depth=num_convs, stride=1, pad=pad, normalize=normalize,
         normalization_type=normalization_type,
         output_type=activation, activation=activation)
 
-    # TODO: ksize
     self.left = ConvChain(
-        width + width, n_left_outputs, ksize=1, width=width,
-        depth=num_convs, stride=1, pad=True, normalize=normalize,
+        width + width, n_left_outputs, ksize=temporal_ksize, width=width,
+        depth=num_convs_state, stride=1, pad=pad, normalize=normalize,
         normalization_type=normalization_type,
         output_type=recurrent_activation, activation=activation)
 
@@ -401,7 +407,8 @@ class RecurrentAutoencoderLevel(nn.Module):
     this_state = state.pop()
     pre_hidden = self.pre_hidden(x)
 
-    new_state = self.left(th.cat([pre_hidden, this_state], 1))  # this is also the new hidden state
+    cc = th.cat([pre_hidden, this_state], 1)
+    new_state = self.left(cc)  # this is also the new hidden state
 
     if self.is_last:
       output = self.right(new_state)
