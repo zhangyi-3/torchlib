@@ -97,10 +97,14 @@ class Checkpointer(object):
     return None, -1
 
   def save_checkpoint(self, epoch, filename):
+    if self.optimizer is not None:
+      optimizer_state = self.optimizer.state_dict()
+    else:
+      optimizer_state = {}
     th.save({ 
         'epoch': epoch + 1,
         'state_dict': self.model.state_dict(),
-        'optimizer' : self.optimizer.state_dict(),
+        'optimizer' : optimizer_state,
         'meta_params': self.meta_params,
         }, os.path.join(self.directory, filename))
 
@@ -132,7 +136,7 @@ class Checkpointer(object):
   def load_checkpoint(self, filename, ignore_optim=False):
     chkpt = th.load(filename)
     self.model.load_state_dict(chkpt["state_dict"])
-    if self.optimizer is not None and not ignore_optim:
+    if self.optimizer is not None and not ignore_optim and chkpt["optimizer"]:
       self.optimizer.load_state_dict(chkpt["optimizer"])
     return chkpt["epoch"]
 
