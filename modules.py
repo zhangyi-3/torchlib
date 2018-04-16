@@ -341,8 +341,6 @@ class RecurrentAutoencoderLevel(nn.Module):
     super(RecurrentAutoencoderLevel, self).__init__()
 
     self.lvl = lvl
-    self.debug = rutils.DebugFeatureVisualizer(
-        ["output_{}".format(lvl)], period=10)
 
     if temporal_ksize is None:
       temporal_ksize=ksize
@@ -428,6 +426,4 @@ class RecurrentAutoencoderLevel(nn.Module):
       concat = th.cat([us_f, new_state], 1)
       output = self.right(concat)
 
-    self.debug.update("output_{}".format(self.lvl), output)
-    self.debug.step()
     return output, next_state
