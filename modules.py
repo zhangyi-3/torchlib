@@ -91,7 +91,7 @@ class ConvChain(nn.Module):
     conv = nn.Conv2d(_in, noutputs, ksize, bias=True, padding=padding)
     conv = nn.utils.weight_norm(conv)  # TODO
     conv.bias.data.zero_()
-    if output_type == "elu":
+    if output_type == "elu" or output_type == "softplus":
       nn.init.xavier_uniform_(
           conv.weight.data, nn.init.calculate_gain("relu"))
     else:
@@ -119,6 +119,8 @@ class ConvChain(nn.Module):
       self.add_module("output_activation", nn.Tanh())
     elif output_type == "elu":
       self.add_module("output_activation", nn.ELU())
+    elif output_type == "softplus":
+      self.add_module("output_activation", nn.Softplus())
     else:
       raise ValueError("Unknon output type '{}'".format(output_type))
 
