@@ -427,3 +427,164 @@ class RecurrentAutoencoderLevel(nn.Module):
       output = self.right(concat)
 
     return output, next_state
+
+class FullyRecurrentAutoencoder(nn.Module):
+  def __init__(self, ninputs, noutputs, ksize=3, width=127, num_levels=3, 
+               num_convs_state=1, num_convs=2, 
+               max_width=512, increase_factor=2.0, 
+               normalize=False, normalization_type="instance",
+               activation="leaky_relu", recurrent_activation="leaky_relu",
+               output_type="linear", pooling="max", pad=True,
+               temporal_ksize=None):
+    super(FullyRecurrentAutoencoder, self).__init__()
+
+    if not pad:
+      raise ValueError("rnn with no padding is not tested!")
+
+    self.num_levels = num_levels
+    self.increase_factor = increase_factor
+    self.max_width = max_width
+    self.width = width
+
+    next_level = None
+    for lvl in range(num_levels-1, -1, -1):
+      n_in = min(int(width*(increase_factor)**(lvl-1)), max_width)
+      w = min(int(width*(increase_factor)**(lvl)), max_width)
+      n_us = min(int(width*(increase_factor)**(lvl+1)), max_width)
+      n_out = w
+      o_type = activation
+
+      if lvl == 0:
+        n_in = ninputs
+        n_out = noutputs
+        o_type = output_type
+      elif lvl == num_levels-1:
+        n_us = None
+
+      next_level = FullyRecurrentAutoencoderLevel(
+          n_in, n_out, level=lvl, next_level=next_level, num_us=n_us,
+          ksize=ksize, width=w, num_convs=num_convs, num_convs_state=num_convs_state,
+          recurrent_activation=recurrent_activation,
+          output_type=o_type, normalize=normalize, activation=activation,
+          normalization_type=normalization_type, pooling=pooling, pad=pad, lvl=lvl,
+          temporal_ksize=temporal_ksize)
+
+    self.add_module("level0", next_level)
+
+  def forward(self, x, state):
+    output, new_state = self.level0(x, state)
+    return output, new_state
+
+  def get_init_state(self, ref_input):
+    state = {"left": [], "right":[] }
+    bs, ci, h, w = ref_input.shape[:4]
+    for lvl in range(self.num_levels):
+      chans = min(int(self.width*(self.increase_factor)**(lvl)), self.max_width)
+      state_lvl = ref_input.data.new()
+      state_lvl.resize_(bs, chans, int(h), int(w))
+      state_lvl.zero_()
+      state_lvl = Variable(state_lvl)
+      state["left"].append(state_lvl)
+      if lvl != self.num_levels-1:
+        state["right"].append(state_lvl.clone())
+      h /= 2
+      w /= 2
+    state["left"].reverse()
+    # state["right"].reverse()
+    return state
+
+class FullyRecurrentAutoencoderLevel(nn.Module):
+  def __init__(self, num_inputs, num_outputs, level=0, next_level=None,
+               num_us=None,
+               ksize=3, width=128, num_convs=2, num_convs_state=2,
+               activation="leaky_relu", output_type="linear", recurrent_activation="leaky_relu",
+               normalize=True, normalization_type="instance", pooling="max",
+               pad=True, lvl=-1, temporal_ksize=None):
+    super(FullyRecurrentAutoencoderLevel, self).__init__()
+
+    self.lvl = lvl
+
+    if temporal_ksize is None:
+      temporal_ksize=ksize
+
+    if not pad:
+      raise ValueError("rnn with no padding is not tested!")
+
+    self.is_last = (next_level is None)
+    self.pad = pad
+    self.num_convs = num_convs
+    self.ksize = ksize
+
+    n_left_outputs = width
+    # if self.is_last:
+    #   n_left_outputs = num_outputs
+
+    self.pre_left = ConvChain(
+        num_inputs, width, ksize=ksize, width=width,
+        depth=num_convs, stride=1, pad=pad, normalize=normalize,
+        normalization_type=normalization_type,
+        output_type=activation, activation=activation)
+
+    self.left = ConvChain(
+        width + width, n_left_outputs, ksize=temporal_ksize, width=width,
+        depth=num_convs_state, stride=1, pad=pad, normalize=normalize,
+        normalization_type=normalization_type,
+        output_type=recurrent_activation, activation=activation)
+
+    if not self.is_last:
+      assert num_us is not None
+
+      if pooling == "max":
+        self.downsample = nn.MaxPool2d(2, 2)
+      elif pooling == "average":
+        self.downsample = nn.AvgPool2d(2, 2)
+      elif pooling == "conv":
+        self.downsample = nn.Conv2d(n_left_outputs, n_left_outputs, 2, stride=2)
+      else:
+        raise ValueError("unknown pooling'{}'".format(pooling))
+
+      self.next_level = next_level
+
+      self.upsample = nn.Upsample(scale_factor=2, mode="nearest")
+
+      self.pre_right = ConvChain(
+          num_us+width, width, ksize=ksize, width=width,
+          depth=num_convs, stride=1, pad=pad, normalize=normalize,
+          normalization_type=normalization_type,
+          activation=activation,
+          output_type=output_type)
+      self.right = ConvChain(
+          2*width, width, ksize=ksize, width=width,
+          depth=num_convs_state, stride=1, pad=pad, normalize=normalize,
+          normalization_type=normalization_type,
+          activation=activation,
+          output_type=output_type)
+
+  def forward(self, x, state):
+    """
+    x -> pre_l  ---> new_state_l  ------> + -----> pre_r ---> new_state_r
+         state_l /      |                us_r      state_r /
+                        |                 |
+                      ds_l -> <nxt>  ---> |
+    """
+
+    pre_l = self.pre_left(x)
+    state_l = state["left"].pop()
+    new_state_l = self.left(th.cat([pre_l, state_l], 1))
+
+    if self.is_last:
+      next_state = {"left": [new_state_l], "right": []}
+      output = new_state_l
+    else:
+      ds_l = self.downsample(new_state_l)
+      next_level_out, next_state = self.next_level(ds_l, state)
+      next_state['left'].append(new_state_l)
+
+      us_r = self.upsample(next_level_out)
+      pre_r = self.pre_right(th.cat([us_r, new_state_l], 1))
+      state_r = state["right"].pop()
+      new_state_r = self.right(th.cat([pre_r, state_r], 1))
+      next_state['right'].insert(0, new_state_r)
+      output = new_state_r
+
+    return output, next_state
