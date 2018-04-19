@@ -438,9 +438,6 @@ class FullyRecurrentAutoencoder(nn.Module):
                temporal_ksize=None):
     super(FullyRecurrentAutoencoder, self).__init__()
 
-    if not pad:
-      raise ValueError("rnn with no padding is not tested!")
-
     self.num_levels = num_levels
     self.increase_factor = increase_factor
     self.max_width = max_width
@@ -506,9 +503,6 @@ class FullyRecurrentAutoencoderLevel(nn.Module):
 
     if temporal_ksize is None:
       temporal_ksize=ksize
-
-    if not pad:
-      raise ValueError("rnn with no padding is not tested!")
 
     self.is_last = (next_level is None)
     self.pad = pad
