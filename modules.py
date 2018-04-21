@@ -11,6 +11,31 @@ from torchlib.image import crop_like
 
 import rendernet.utils as rutils
 
+class ImageGradients(nn.Module):
+  def __init__(self, c_in):
+    super(ImageGradients, self).__init__()
+    self.dx = nn.Conv2d(c_in, c_in, [3, 3], padding=1, bias=False)
+    self.dy = nn.Conv2d(c_in, c_in, [3, 3], padding=1, bias=False)
+
+    self.dx.weight.data.zero_()
+    self.dx.weight.data[:, :, 0, 0]  = -1
+    self.dx.weight.data[:, :, 0, 2]  = 1
+    self.dx.weight.data[:, :, 1, 0]  = -2
+    self.dx.weight.data[:, :, 1, 2]  = 2
+    self.dx.weight.data[:, :, 2, 0]  = -1
+    self.dx.weight.data[:, :, 2, 2]  = 1
+
+    self.dy.weight.data.zero_()
+    self.dy.weight.data[:, :, 0, 0]  = -1
+    self.dy.weight.data[:, :, 2, 0]  = 1
+    self.dy.weight.data[:, :, 0, 1]  = -2
+    self.dy.weight.data[:, :, 2, 1]  = 2
+    self.dy.weight.data[:, :, 0, 2]  = -1
+    self.dy.weight.data[:, :, 2, 2]  = 1
+
+  def forward(self, im):
+    return th.cat([self.dx(im), self.dy(im)], 1)
+
 class FullyConnected(nn.Module):
   def __init__(self, ninputs, noutputs, width=32, depth=3, 
                normalize=False, dropout=False):
@@ -55,7 +80,6 @@ class FullyConnected(nn.Module):
   def forward(self, x):
     x = self.net(x)
     return x
-
 
 class ConvChain(nn.Module):
   def __init__(self, ninputs, noutputs, ksize=3, width=64, depth=3, stride=1,
