@@ -102,7 +102,7 @@ class ConvChain(nn.Module):
   def __init__(self, ninputs, noutputs, ksize=3, width=64, depth=3, stride=1,
                pad=True, normalize=False, normalization_type="batch", 
                output_type="linear", 
-               activation="relu"):
+               activation="relu", weight_norm=True):
     super(ConvChain, self).__init__()
 
     assert depth > 0
@@ -121,7 +121,7 @@ class ConvChain(nn.Module):
       layers.append(
           ConvBNRelu(
             _in, ksize, width, normalize=normalize, normalization_type="batch", padding=padding, 
-            stride=stride, activation=activation))
+            stride=stride, activation=activation, weight_norm=weight_norm))
 
     # Last layer
     if depth > 1:
@@ -130,7 +130,8 @@ class ConvChain(nn.Module):
       _in = ninputs
 
     conv = nn.Conv2d(_in, noutputs, ksize, bias=True, padding=padding)
-    conv = nn.utils.weight_norm(conv)  # TODO
+    if weight_norm:
+      conv = nn.utils.weight_norm(conv)  # TODO
     conv.bias.data.zero_()
     if output_type == "elu" or output_type == "softplus":
       nn.init.xavier_uniform_(
@@ -174,7 +175,7 @@ class ConvChain(nn.Module):
 class ConvBNRelu(nn.Module):
   def __init__(self, ninputs, ksize, noutputs, normalize=False, 
                normalization_type="batch", stride=1, padding=0,
-               activation="relu"):
+               activation="relu", weight_norm=True):
     super(ConvBNRelu, self).__init__()
     if activation == "relu":
       act_fn = nn.ReLU
@@ -200,7 +201,8 @@ class ConvBNRelu(nn.Module):
       self.layer = nn.Sequential(conv, nrm, act_fn())
     else:
       conv = nn.Conv2d(ninputs, noutputs, ksize, stride=stride, padding=padding)
-      conv = nn.utils.weight_norm(conv)  # TODO
+      if weight_norm:
+        conv = nn.utils.weight_norm(conv)  # TODO
       conv.bias.data.zero_()
       self.layer = nn.Sequential(conv, act_fn())
 
