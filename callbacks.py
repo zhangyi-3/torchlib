@@ -13,7 +13,7 @@ class Callback(object):
   def on_batch_begin(self, batch, logs):
     pass
 
-  def on_batch_end(self, batch, num_batches, logs):
+  def on_batch_end(self, batch, batch_id, num_batches, logs):
     pass
 
   def get_frac(self, batch, num_batches):
@@ -27,8 +27,8 @@ class LossCallback(Callback):
     self.viz = viz.ScalarVisualizer(
         "loss", opts={"legend": ["train", "val"]}, env=env)
 
-  def on_batch_end(self, batch, num_batches, logs):
-    frac = self.get_frac(batch, num_batches)
+  def on_batch_end(self, batch, batch_id, num_batches, logs):
+    frac = self.get_frac(batch_id, num_batches)
     self.viz.update(frac, logs["loss"], name="train")
 
   def on_epoch_end(self, epoch, logs):

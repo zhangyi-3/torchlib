@@ -9,7 +9,6 @@ from torch.autograd import Variable
 
 from torchlib.image import crop_like
 
-import rendernet.utils as rutils
 
 class FullyConnected(nn.Module):
   def __init__(self, ninputs, noutputs, width=32, depth=3, 
