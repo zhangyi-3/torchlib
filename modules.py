@@ -10,6 +10,48 @@ from torch.autograd import Variable
 from torchlib.image import crop_like
 
 
+class MedianFilter(nn.Module):
+  def __init__(self, ksize=3):
+    super(MedianFilter, self).__init__()
+    self.ksize = ksize
+
+  def forward(self, x):
+    k = self.ksize
+    assert(len(x.shape) == 4)
+    x = F.pad(x, [k//2, k//2, k//2, k//2])
+    x = x.unfold(2, k, 1).unfold(3, k, 1)
+    x = x.contiguous().view(x.size()[:4] + (-1,)).median(dim=-1)[0]
+    return x
+
+
+class ImageGradients(nn.Module):
+  def __init__(self, c_in):
+    super(ImageGradients, self).__init__()
+    self.dx = nn.Conv2d(c_in, c_in, [3, 3], padding=1, bias=False)
+    self.dy = nn.Conv2d(c_in, c_in, [3, 3], padding=1, bias=False)
+
+    self.dx.weight.requires_grad = False
+    self.dy.weight.requires_grad = False
+
+    self.dx.weight.data.zero_()
+    self.dx.weight.data[:, :, 0, 0]  = -1
+    self.dx.weight.data[:, :, 0, 2]  = 1
+    self.dx.weight.data[:, :, 1, 0]  = -2
+    self.dx.weight.data[:, :, 1, 2]  = 2
+    self.dx.weight.data[:, :, 2, 0]  = -1
+    self.dx.weight.data[:, :, 2, 2]  = 1
+
+    self.dy.weight.data.zero_()
+    self.dy.weight.data[:, :, 0, 0]  = -1
+    self.dy.weight.data[:, :, 2, 0]  = 1
+    self.dy.weight.data[:, :, 0, 1]  = -2
+    self.dy.weight.data[:, :, 2, 1]  = 2
+    self.dy.weight.data[:, :, 0, 2]  = -1
+    self.dy.weight.data[:, :, 2, 2]  = 1
+
+  def forward(self, im):
+    return th.cat([self.dx(im), self.dy(im)], 1)
+
 class FullyConnected(nn.Module):
   def __init__(self, ninputs, noutputs, width=32, depth=3, 
                normalize=False, dropout=False):
@@ -55,12 +97,11 @@ class FullyConnected(nn.Module):
     x = self.net(x)
     return x
 
-
 class ConvChain(nn.Module):
   def __init__(self, ninputs, noutputs, ksize=3, width=64, depth=3, stride=1,
                pad=True, normalize=False, normalization_type="batch", 
                output_type="linear", 
-               activation="relu"):
+               activation="relu", weight_norm=True):
     super(ConvChain, self).__init__()
 
     assert depth > 0
@@ -79,7 +120,7 @@ class ConvChain(nn.Module):
       layers.append(
           ConvBNRelu(
             _in, ksize, width, normalize=normalize, normalization_type="batch", padding=padding, 
-            stride=stride, activation=activation))
+            stride=stride, activation=activation, weight_norm=weight_norm))
 
     # Last layer
     if depth > 1:
@@ -88,7 +129,8 @@ class ConvChain(nn.Module):
       _in = ninputs
 
     conv = nn.Conv2d(_in, noutputs, ksize, bias=True, padding=padding)
-    conv = nn.utils.weight_norm(conv)  # TODO
+    if weight_norm:
+      conv = nn.utils.weight_norm(conv)  # TODO
     conv.bias.data.zero_()
     if output_type == "elu" or output_type == "softplus":
       nn.init.xavier_uniform_(
@@ -132,7 +174,7 @@ class ConvChain(nn.Module):
 class ConvBNRelu(nn.Module):
   def __init__(self, ninputs, ksize, noutputs, normalize=False, 
                normalization_type="batch", stride=1, padding=0,
-               activation="relu"):
+               activation="relu", weight_norm=True):
     super(ConvBNRelu, self).__init__()
     if activation == "relu":
       act_fn = nn.ReLU
@@ -158,7 +200,8 @@ class ConvBNRelu(nn.Module):
       self.layer = nn.Sequential(conv, nrm, act_fn())
     else:
       conv = nn.Conv2d(ninputs, noutputs, ksize, stride=stride, padding=padding)
-      conv = nn.utils.weight_norm(conv)  # TODO
+      if weight_norm:
+        conv = nn.utils.weight_norm(conv)  # TODO
       conv.bias.data.zero_()
       self.layer = nn.Sequential(conv, act_fn())
 
@@ -437,9 +480,6 @@ class FullyRecurrentAutoencoder(nn.Module):
                temporal_ksize=None):
     super(FullyRecurrentAutoencoder, self).__init__()
 
-    if not pad:
-      raise ValueError("rnn with no padding is not tested!")
-
     self.num_levels = num_levels
     self.increase_factor = increase_factor
     self.max_width = max_width
@@ -505,9 +545,6 @@ class FullyRecurrentAutoencoderLevel(nn.Module):
 
     if temporal_ksize is None:
       temporal_ksize=ksize
-
-    if not pad:
-      raise ValueError("rnn with no padding is not tested!")
 
     self.is_last = (next_level is None)
     self.pad = pad
