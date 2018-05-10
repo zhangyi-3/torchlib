@@ -624,3 +624,60 @@ class FullyRecurrentAutoencoderLevel(nn.Module):
       output = new_state_r
 
     return output, next_state
+
+
+class RecurrentCNN(nn.Module):
+  def __init__(self, ninputs, noutputs, ksize=3, width=64, block_depth=2, 
+               nblocks=3):
+    super(RecurrentCNN, self).__init__()
+
+    self.ninputs = ninputs
+    self.noutputs = noutputs
+    self.width = width
+    self.nblocks = nblocks
+
+    self.embedding = nn.Sequential(
+        nn.Conv2d(ninputs, width, ksize, stride=1, padding=ksize//2),
+        nn.LeakyReLU(inplace=True))
+
+    for n in range(nblocks):
+      ops = []
+      for d in range(block_depth):
+        if d == 0:
+          c_in = 2*width
+        else:
+          c_in = width
+
+        if d == block_depth-1:
+          c_out = width
+        else:
+          c_out = width
+
+        ops.append(nn.Conv2d(c_in, c_out, ksize, stride=1, padding=ksize//2))
+        ops.append(nn.LeakyReLU(inplace=True))
+
+      block = nn.Sequential(*ops)
+      self.add_module("block{}".format(n), block)
+
+    self.output = nn.Sequential(
+        nn.Conv2d(width, noutputs, ksize, stride=1, padding=ksize//2),
+    )
+
+  def forward(self, x, state):
+    x = self.embedding(x)
+    new_state = []
+    for i in range(self.nblocks):  # recurrent blocks
+      x = self._modules["block{}".format(i)](th.cat([state[i], x], 1))  # process forward
+      new_state.append(x)  # update state
+    output = self.output(x)
+    return output, new_state
+
+  def get_init_state(self, ref_input):
+    state = []
+    bs, _, h, w = ref_input.shape[:4]
+    for b in range(self.nblocks):
+      state_buf = ref_input.data.new()
+      state_buf.resize_(bs, self.width, int(h), int(w))
+      state_buf.zero_()
+      state.append(state_buf)
+    return state
