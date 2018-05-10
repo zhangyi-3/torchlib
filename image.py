@@ -26,6 +26,8 @@ def read_pfm(path):
     data = np.fromfile(fid, dtype=np.float32, count=width*height*nchans)
     data = np.reshape(data, (height, width, nchans))
 
+    data[np.isnan(data)] = 0.0
+
     return data
 
 def write_pfm(path, im):
