@@ -9,7 +9,6 @@ from torch.autograd import Variable
 
 from torchlib.image import crop_like
 
-import rendernet.utils as rutils
 
 class MedianFilter(nn.Module):
   def __init__(self, ksize=3):

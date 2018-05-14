@@ -118,10 +118,10 @@ class Trainer(object):
     for c in self.callbacks:
       c.on_epoch_end(self.epoch, logs)
 
-  def _on_batch_end(self, batch_id, num_batches, logs):
+  def _on_batch_end(self, batch, batch_id, num_batches, logs):
     self.log.debug("Batch ends")
     for c in self.callbacks:
-      c.on_batch_end(batch_id, num_batches, logs)
+      c.on_batch_end(batch, batch_id, num_batches, logs)
 
   def _train_one_epoch(self, num_epochs):
     self.model.train(True)
@@ -161,7 +161,7 @@ class Trainer(object):
         pbar.set_postfix(logs)
 
         if pbar.n % self.params.viz_step == 0:
-          self._on_batch_end(batch_id, len(self.train_loader), logs)
+          self._on_batch_end(batch, batch_id, len(self.train_loader), logs)
 
         pbar.update(1)
 
