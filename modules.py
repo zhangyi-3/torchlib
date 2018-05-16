@@ -300,7 +300,8 @@ class AutoencoderLevel(nn.Module):
 
     ds = self.downsample(left)
     next_level = self.next_level(ds)
-    us = self.upsample(next_level)
+    us = F.upsample(next_level, size=left.shape[-2:], mode='bilinear')
+    # us = self.upsample(next_level)
     concat = th.cat([us, left], 1)
     output = self.right(concat)
     return output
