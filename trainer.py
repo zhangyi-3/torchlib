@@ -2,6 +2,7 @@ import time
 import logging
 
 from tqdm import tqdm
+import numpy as np
 
 import torch as th
 import torch.optim as optim
@@ -15,6 +16,7 @@ class Trainer(object):
 
   class Parameters(object):
     def __init__(self, optimizer=optim.Adam, 
+                 optimizer_params={},
                  batch_size=1, lr=1e-4, wd=0, viz_smoothing=0.999,
                  viz_step=100,
                  checkpoint_interval=60):
@@ -22,6 +24,7 @@ class Trainer(object):
       self.lr = lr
       self.wd = wd
       self.optimizer = optimizer
+      self.optimizer_params = optimizer_params
       self.viz_smoothing = viz_smoothing
       self.viz_step = viz_step
       self.checkpoint_interval = checkpoint_interval
@@ -73,7 +76,7 @@ class Trainer(object):
     self.optimizer = self.params.optimizer(
         self.model.parameters(),
         lr=self.params.lr, 
-        weight_decay=self.params.wd)
+        weight_decay=self.params.wd, **self.params.optimizer_params)
 
     if output is not None:
       self.checkpointer = utils.Checkpointer(
@@ -85,11 +88,11 @@ class Trainer(object):
 
     self.train_loader = DataLoader(
       self.trainset, batch_size=self.params.batch_size, 
-      shuffle=True, num_workers=4)
+      shuffle=True, num_workers=4, worker_init_fn=np.random.seed)
 
     if self.valset is not None:
       self.val_loader = DataLoader(
-          self.valset, batch_size=self.params.batch_size,
+          self.valset, batch_size=min(self.params.batch_size, len(self.valset)),
           shuffle=True, num_workers=0, 
           drop_last=True)  # so we have a fixed batch size for averaging in val
     else:
