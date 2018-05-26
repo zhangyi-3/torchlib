@@ -12,6 +12,18 @@ def tensor(t, key="none", env="debug"):
   t = th.clamp(0.5*(t+1), 0, 1)
   v.update(t.cpu().numpy(), caption="{} {:.2f} ({:.2f})".format(key, mu, std))
 
+def array(t, key="none", env="debug"):
+  v = viz.BatchVisualizer(key, env=env)
+  if len(t.shape) == 3:
+    c, h, w = t.shape
+  else:
+    raise ValueError("unknown dim")
+  mu = t.mean()
+  std = t.std()
+  t = (t-mu) / (2*std + 1e-8)
+  t = np.clip(0.5*(t+1), 0, 1)
+  v.update(t, caption="{} {:.2f} ({:.2f})".format(key, mu, std))
+
 def histogram(t, bins=10, key="none", env="debug"):
   v = viz.HistogramVisualizer(key, env=env)
   v.update(t.detach().cpu().numpy(), numbins=bins)

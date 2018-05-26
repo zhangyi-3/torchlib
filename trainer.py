@@ -40,12 +40,14 @@ class Trainer(object):
   def __init__(self, trainset, model, criteria, output=None,
                model_params=None,
                params=None, metrics={}, cuda=False,
+               profile=False,
                callbacks=[callbacks.LossCallback()], valset=None, 
                verbose=False):
 
     self.verbose = verbose
     self.log = logging.getLogger("trainer")
     self.log.setLevel(logging.INFO)
+    self.profile = profile
     if self.verbose:
       self.log.setLevel(logging.DEBUG)
 
@@ -133,6 +135,8 @@ class Trainer(object):
         self.epoch+1, num_epochs if num_epochs > 0 else "--"))
 
       for batch_id, batch in enumerate(self.train_loader):
+        start = time.time()
+
         batch_v = utils.make_variable(batch, cuda=self._cuda)
         self.optimizer.zero_grad()
 
@@ -159,6 +163,10 @@ class Trainer(object):
         loss.backward()
 
         self.optimizer.step()
+
+        elapsed = (time.time()-start)*1000
+        if self.profile:
+          print("Training step {:.0f} ms".format(elapsed))
 
         logs = {k: self.ema[k] for k in self.log_keys}
         pbar.set_postfix(logs)
