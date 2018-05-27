@@ -151,14 +151,14 @@ class Trainer(object):
         for k in self.criteria.keys():
           crit = self.criteria[k](batch_v, output)
           c_out.append(crit)
-          self.ema.update(k, crit.cpu().data.item())
+          self.ema.update(k, crit.detach().cpu().item())
         loss = sum(c_out)
-        self.ema.update("loss", loss.cpu().data.item())
+        self.ema.update("loss", loss.detach().cpu().data.item())
 
         # Compute all metrics
         for k in self.metrics.keys():
           m = self.metrics[k](batch_v, output)
-          self.ema.update(k, m.cpu().data.item())
+          self.ema.update(k, m.detach().cpu().item())
 
         loss.backward()
 
