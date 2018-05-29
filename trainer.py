@@ -76,7 +76,7 @@ class Trainer(object):
     self.callbacks = callbacks
 
     self.optimizer = self.params.optimizer(
-        self.model.parameters(),
+        [p for p in self.model.parameters() if p.requires_grad],
         lr=self.params.lr, 
         weight_decay=self.params.wd, **self.params.optimizer_params)
 
