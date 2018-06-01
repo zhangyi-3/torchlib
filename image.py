@@ -30,6 +30,32 @@ def read_pfm(path):
 
     return data
 
+def read_ppm(path):
+  with open(path, 'rb') as fid:
+    identifier = fid.readline().strip()
+    if identifier == b'P6':  # color
+      nchans = 3
+    # elif identifier == b'Pf':  # gray
+    #   nchans = 1
+    else:
+      raise ValueError("Unknown PFM identifier {}".format(identifier))
+
+    dimensions = fid.readline().strip()
+    width, height = [int(x) for x in dimensions.split()]
+    maxval = int(fid.readline().strip())
+
+    data = np.fromfile(fid, dtype=np.uint16, count=width*height*nchans)
+    data.byteswap(inplace=True)
+    data = np.reshape(data, (height, width, nchans))
+
+    data = data.astype(np.float32) / (1.0*maxval)
+
+    data[np.isnan(data)] = 0.0
+
+    # import ipdb; ipdb.set_trace()
+
+    return data
+
 def write_pfm(path, im):
   assert im.dtype == np.float32, "pfm image should be float32"
   height, width, nchans = im.shape
