@@ -40,8 +40,10 @@ def read_ppm(path):
     else:
       raise ValueError("Unknown PFM identifier {}".format(identifier))
 
-    dimensions = fid.readline().strip()
-    width, height = [int(x) for x in dimensions.split()]
+    dimensions = fid.readline().strip().split()
+    if len(dimensions) != 2:
+      dimensions += fid.readline().strip().split()
+    width, height = [int(x) for x in dimensions]
     maxval = int(fid.readline().strip())
 
     data = np.fromfile(fid, dtype=np.uint16, count=width*height*nchans)
