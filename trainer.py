@@ -2,6 +2,7 @@ import time
 import logging
 
 from tqdm import tqdm
+import numpy as np
 
 import torch as th
 import torch.optim as optim
@@ -15,6 +16,7 @@ class Trainer(object):
 
   class Parameters(object):
     def __init__(self, optimizer=optim.Adam, 
+                 optimizer_params={},
                  batch_size=1, lr=1e-4, wd=0, viz_smoothing=0.999,
                  viz_step=100,
                  checkpoint_interval=60):
@@ -22,6 +24,7 @@ class Trainer(object):
       self.lr = lr
       self.wd = wd
       self.optimizer = optimizer
+      self.optimizer_params = optimizer_params
       self.viz_smoothing = viz_smoothing
       self.viz_step = viz_step
       self.checkpoint_interval = checkpoint_interval
@@ -45,12 +48,14 @@ class Trainer(object):
   def __init__(self, trainset, model, criteria, output=None,
                model_params=None,
                params=None, metrics={}, cuda=False, fp16_scaling=-1,
+               profile=False,
                callbacks=[callbacks.LossCallback()], valset=None, 
                verbose=False):
 
     self.verbose = verbose
     self.log = logging.getLogger("trainer")
     self.log.setLevel(logging.INFO)
+    self.profile = profile
     if self.verbose:
       self.log.setLevel(logging.DEBUG)
 
@@ -95,9 +100,9 @@ class Trainer(object):
       params_to_optimize = self.model.parameters()
 
     self.optimizer = self.params.optimizer(
-        params_to_optimize,
+        [p for p in params_to_optimize if p.requires_grad],
         lr=self.params.lr, 
-        weight_decay=self.params.wd)
+        weight_decay=self.params.wd, **self.params.optimizer_params)
 
     if output is not None:
       self.checkpointer = utils.Checkpointer(
@@ -109,11 +114,11 @@ class Trainer(object):
 
     self.train_loader = DataLoader(
       self.trainset, batch_size=self.params.batch_size, 
-      shuffle=True, num_workers=4)
+      shuffle=True, num_workers=4, worker_init_fn=np.random.seed)
 
     if self.valset is not None:
       self.val_loader = DataLoader(
-          self.valset, batch_size=self.params.batch_size,
+          self.valset, batch_size=min(self.params.batch_size, len(self.valset)),
           shuffle=True, num_workers=0, 
           drop_last=True)  # so we have a fixed batch size for averaging in val
     else:
@@ -168,14 +173,14 @@ class Trainer(object):
         for k in self.criteria.keys():
           crit = self.criteria[k](batch_v, output)
           c_out.append(crit)
-          self.ema.update(k, crit.cpu().data.item())
+          self.ema.update(k, crit.detach().cpu().item())
         loss = sum(c_out)
-        self.ema.update("loss", loss.cpu().data.item())
+        self.ema.update("loss", loss.detach().cpu().data.item())
 
         # Compute all metrics
         for k in self.metrics.keys():
           m = self.metrics[k](batch_v, output)
-          self.ema.update(k, m.cpu().data.item())
+          self.ema.update(k, m.detach().cpu().item())
 
         if self.fp16:
           loss = loss * self.fp16_scaling
