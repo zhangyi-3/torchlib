@@ -30,13 +30,21 @@ class Trainer(object):
     self._cuda = b
     if b:
       self.model.cuda()
+      if self.fp16:
+        self.model = self.model.half()
       for l in self.criteria:
         self.criteria[l].cuda()
+        if self.fp16:
+          self.criteria[l] = self.criteria[l].half()
+      for l in self.metrics:
+        self.metrics[l].cuda()
+        if self.fp16:
+          self.metrics[l] = self.metrics[l].half()
       self.log.debug("swich to cuda")
 
   def __init__(self, trainset, model, criteria, output=None,
                model_params=None,
-               params=None, metrics={}, cuda=False,
+               params=None, metrics={}, cuda=False, fp16_scaling=-1,
                callbacks=[callbacks.LossCallback()], valset=None, 
                verbose=False):
 
@@ -46,9 +54,14 @@ class Trainer(object):
     if self.verbose:
       self.log.setLevel(logging.DEBUG)
 
-    self.model = model
     self.trainset = trainset
     self.valset = valset
+
+    self.fp16 = False
+    if fp16_scaling > 0:
+      self.log.info("Using half-precision")
+      self.fp16_scaling = fp16_scaling
+      self.fp16 = True
 
     if params is None:
       self.params = Trainer.Parameters()
@@ -62,16 +75,27 @@ class Trainer(object):
     if metrics is not None:
       self.log_keys += list(self.metrics.keys())
 
-    self.cuda(cuda)
-
     self.ema = utils.ExponentialMovingAverage(
         self.log_keys, alpha=self.params.viz_smoothing)
     self.averager = utils.Averager(self.log_keys)
 
     self.callbacks = callbacks
 
+    if self.fp16:
+      self.param_fp32 = [p.clone().cuda().float().detach() for p in model.parameters()]
+      for p in self.param_fp32:
+        p.requires_grad = True
+
+    self.model = model
+    self.cuda(cuda)
+
+    if self.fp16:
+      params_to_optimize = self.param_fp32
+    else:
+      params_to_optimize = self.model.parameters()
+
     self.optimizer = self.params.optimizer(
-        self.model.parameters(),
+        params_to_optimize,
         lr=self.params.lr, 
         weight_decay=self.params.wd)
 
@@ -95,7 +119,7 @@ class Trainer(object):
     else:
       self.val_loader = None
   
-    self.log.debug("Model: {}\n".format(model))
+    self.log.debug("Model: {}\n".format(self.model))
     self.log.debug("Parameters to train:")
     for n, p in model.named_parameters():
       self.log.debug('  - {}'.format(n))
@@ -130,8 +154,8 @@ class Trainer(object):
         self.epoch+1, num_epochs if num_epochs > 0 else "--"))
 
       for batch_id, batch in enumerate(self.train_loader):
-        batch_v = utils.make_variable(batch, cuda=self._cuda)
-        self.optimizer.zero_grad()
+        batch_v = utils.make_variable(batch, cuda=self._cuda, fp16=self.fp16)
+        self.model.zero_grad()
 
         start = time.time()
         output = self.model(batch_v)
@@ -153,9 +177,20 @@ class Trainer(object):
           m = self.metrics[k](batch_v, output)
           self.ema.update(k, m.cpu().data.item())
 
+        if self.fp16:
+          loss = loss * self.fp16_scaling
+
         loss.backward()
 
+        if self.fp16:
+          for p, p16 in zip(self.param_fp32, self.model.parameters()):
+            p.grad = p16.grad.detach().float() / self.fp16_scaling
+
         self.optimizer.step()
+
+        if self.fp16:
+          for p, p16 in zip(self.param_fp32, self.model.parameters()):
+            p16.data.copy_(p.data)
 
         logs = {k: self.ema[k] for k in self.log_keys}
         pbar.set_postfix(logs)
@@ -227,7 +262,7 @@ class Trainer(object):
         pbar.set_description("Epoch {}/{} (val)".format(
           self.epoch+1, num_epochs if num_epochs > 0 else "--"))
         for batch_id, batch in enumerate(self.val_loader):
-          batch_v = utils.make_variable(batch, cuda=self._cuda)
+          batch_v = utils.make_variable(batch, cuda=self._cuda, fp16=self.fp16)
           output = self.model(batch_v)
 
           # Compute all losses

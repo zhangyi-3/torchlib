@@ -9,11 +9,13 @@ log = logging.getLogger(__name__)
 import os
 import re
 
-def make_variable(d, cuda=True, async=False):
+def make_variable(d, cuda=True, async=False, fp16=False):
   ret = {}
   for k in d.keys():
     if cuda and hasattr(d[k], "cuda"):
       ret[k] = d[k].cuda(non_blocking=async)
+      if fp16:
+        ret[k] = ret[k].half()
     else:
       ret[k] = d[k]
   return ret
