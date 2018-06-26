@@ -6,6 +6,8 @@ def tensor(t, key="none", env="debug"):
   t = t.detach()
   v = viz.BatchVisualizer(key, env=env)
   bs, c, h, w = t.shape
+  if c != 1 and c != 3:
+    t = t.view(bs*c, 1, h, w)
   mu = t.mean()
   std = t.std()
   t = (t-mu) / (2*std + 1e-8)
