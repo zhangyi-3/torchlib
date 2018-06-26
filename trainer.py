@@ -2,6 +2,7 @@ import time
 import logging
 
 from tqdm import tqdm
+import numpy as np
 
 import torch as th
 import torch.optim as optim
@@ -15,6 +16,7 @@ class Trainer(object):
 
   class Parameters(object):
     def __init__(self, optimizer=optim.Adam, 
+                 optimizer_params={},
                  batch_size=1, lr=1e-4, wd=0, viz_smoothing=0.999,
                  viz_step=100,
                  checkpoint_interval=60):
@@ -22,6 +24,7 @@ class Trainer(object):
       self.lr = lr
       self.wd = wd
       self.optimizer = optimizer
+      self.optimizer_params = optimizer_params
       self.viz_smoothing = viz_smoothing
       self.viz_step = viz_step
       self.checkpoint_interval = checkpoint_interval
@@ -30,25 +33,40 @@ class Trainer(object):
     self._cuda = b
     if b:
       self.model.cuda()
+      if self.fp16:
+        self.model = self.model.half()
       for l in self.criteria:
         self.criteria[l].cuda()
+        if self.fp16:
+          self.criteria[l] = self.criteria[l].half()
+      for l in self.metrics:
+        self.metrics[l].cuda()
+        if self.fp16:
+          self.metrics[l] = self.metrics[l].half()
       self.log.debug("swich to cuda")
 
   def __init__(self, trainset, model, criteria, output=None,
                model_params=None,
-               params=None, metrics={}, cuda=False,
+               params=None, metrics={}, cuda=False, fp16_scaling=-1,
+               profile=False,
                callbacks=[callbacks.LossCallback()], valset=None, 
                verbose=False):
 
     self.verbose = verbose
     self.log = logging.getLogger("trainer")
     self.log.setLevel(logging.INFO)
+    self.profile = profile
     if self.verbose:
       self.log.setLevel(logging.DEBUG)
 
-    self.model = model
     self.trainset = trainset
     self.valset = valset
+
+    self.fp16 = False
+    if fp16_scaling > 0:
+      self.log.info("Using half-precision")
+      self.fp16_scaling = fp16_scaling
+      self.fp16 = True
 
     if params is None:
       self.params = Trainer.Parameters()
@@ -62,18 +80,29 @@ class Trainer(object):
     if metrics is not None:
       self.log_keys += list(self.metrics.keys())
 
-    self.cuda(cuda)
-
     self.ema = utils.ExponentialMovingAverage(
         self.log_keys, alpha=self.params.viz_smoothing)
     self.averager = utils.Averager(self.log_keys)
 
     self.callbacks = callbacks
 
+    if self.fp16:
+      self.param_fp32 = [p.clone().cuda().float().detach() for p in model.parameters()]
+      for p in self.param_fp32:
+        p.requires_grad = True
+
+    self.model = model
+    self.cuda(cuda)
+
+    if self.fp16:
+      params_to_optimize = self.param_fp32
+    else:
+      params_to_optimize = self.model.parameters()
+
     self.optimizer = self.params.optimizer(
-        self.model.parameters(),
+        [p for p in params_to_optimize if p.requires_grad],
         lr=self.params.lr, 
-        weight_decay=self.params.wd)
+        weight_decay=self.params.wd, **self.params.optimizer_params)
 
     if output is not None:
       self.checkpointer = utils.Checkpointer(
@@ -85,17 +114,17 @@ class Trainer(object):
 
     self.train_loader = DataLoader(
       self.trainset, batch_size=self.params.batch_size, 
-      shuffle=True, num_workers=4)
+      shuffle=True, num_workers=4, worker_init_fn=np.random.seed)
 
     if self.valset is not None:
       self.val_loader = DataLoader(
-          self.valset, batch_size=self.params.batch_size,
+          self.valset, batch_size=min(self.params.batch_size, len(self.valset)),
           shuffle=True, num_workers=0, 
           drop_last=True)  # so we have a fixed batch size for averaging in val
     else:
       self.val_loader = None
   
-    self.log.debug("Model: {}\n".format(model))
+    self.log.debug("Model: {}\n".format(self.model))
     self.log.debug("Parameters to train:")
     for n, p in model.named_parameters():
       self.log.debug('  - {}'.format(n))
@@ -130,8 +159,8 @@ class Trainer(object):
         self.epoch+1, num_epochs if num_epochs > 0 else "--"))
 
       for batch_id, batch in enumerate(self.train_loader):
-        batch_v = utils.make_variable(batch, cuda=self._cuda)
-        self.optimizer.zero_grad()
+        batch_v = utils.make_variable(batch, cuda=self._cuda, fp16=self.fp16)
+        self.model.zero_grad()
 
         start = time.time()
         output = self.model(batch_v)
@@ -144,18 +173,29 @@ class Trainer(object):
         for k in self.criteria.keys():
           crit = self.criteria[k](batch_v, output)
           c_out.append(crit)
-          self.ema.update(k, crit.cpu().data.item())
+          self.ema.update(k, crit.detach().cpu().item())
         loss = sum(c_out)
-        self.ema.update("loss", loss.cpu().data.item())
+        self.ema.update("loss", loss.detach().cpu().data.item())
 
         # Compute all metrics
         for k in self.metrics.keys():
           m = self.metrics[k](batch_v, output)
-          self.ema.update(k, m.cpu().data.item())
+          self.ema.update(k, m.detach().cpu().item())
+
+        if self.fp16:
+          loss = loss * self.fp16_scaling
 
         loss.backward()
 
+        if self.fp16:
+          for p, p16 in zip(self.param_fp32, self.model.parameters()):
+            p.grad = p16.grad.detach().float() / self.fp16_scaling
+
         self.optimizer.step()
+
+        if self.fp16:
+          for p, p16 in zip(self.param_fp32, self.model.parameters()):
+            p16.data.copy_(p.data)
 
         logs = {k: self.ema[k] for k in self.log_keys}
         pbar.set_postfix(logs)
@@ -227,7 +267,7 @@ class Trainer(object):
         pbar.set_description("Epoch {}/{} (val)".format(
           self.epoch+1, num_epochs if num_epochs > 0 else "--"))
         for batch_id, batch in enumerate(self.val_loader):
-          batch_v = utils.make_variable(batch, cuda=self._cuda)
+          batch_v = utils.make_variable(batch, cuda=self._cuda, fp16=self.fp16)
           output = self.model(batch_v)
 
           # Compute all losses
