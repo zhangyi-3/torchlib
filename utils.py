@@ -23,7 +23,7 @@ def make_variable(d, cuda=True, async=False, fp16=False):
 
 class Checkpointer(object):
   @staticmethod
-  def _get_sorted_checkpoints(directory):
+  def __get_sorted_checkpoints(directory):
     reg = re.compile(r".*\.pth\.tar")
     all_checkpoints = [f for f in os.listdir(directory) if
         reg.match(f)]
@@ -37,7 +37,8 @@ class Checkpointer(object):
 
   @staticmethod
   def get_meta(directory):
-    all_checkpoints = Checkpointer._get_sorted_checkpoints(directory)
+    """Fetch metadata from a checkpoint directory to restore model params."""
+    all_checkpoints = Checkpointer.__get_sorted_checkpoints(directory)
     for f in all_checkpoints:
       try:
         chkpt = th.load(os.path.join(directory, f))
@@ -50,7 +51,7 @@ class Checkpointer(object):
 
   def __init__(self, directory, model, optimizer, 
                max_save=5,
-               interval=-1,
+               interval=None,
                meta_params=None,
                filename='ckpt.pth.tar', verbose=False):
     """
@@ -73,25 +74,28 @@ class Checkpointer(object):
     self.meta_params = meta_params
     self.interval = interval
 
-    if self.interval > 0:
+    if self.interval is not None:
       self.last_checkpoint_time = time.time()
 
-    all_checkpoints = Checkpointer._get_sorted_checkpoints(self.directory)
+    all_checkpoints = Checkpointer.__get_sorted_checkpoints(self.directory)
 
     reg_epoch = re.compile(r"epoch.*\.pth\.tar")
     reg_periodic = re.compile(r"periodic.*\.pth\.tar")
-    self.old_epoch_files = sorted([c for c in all_checkpoints if reg_epoch.match(c)])
-    self.old_timed_files = sorted([c for c in all_checkpoints if reg_periodic.match(c)])
+    self.old_epoch_files = sorted([c for c in all_checkpoints if
+                                   reg_epoch.match(c)])
+    self.old_timed_files = sorted([c for c in all_checkpoints if
+                                   reg_periodic.match(c)])
 
   def load_latest(self, ignore_optim=False):
-    all_checkpoints = Checkpointer._get_sorted_checkpoints(self.directory)
+    all_checkpoints = Checkpointer.__get_sorted_checkpoints(self.directory)
 
     if len(all_checkpoints) == 0:
       return None, 0
 
     for f in all_checkpoints:
       try:
-        e = self.load_checkpoint(os.path.join(self.directory, f), ignore_optim=ignore_optim)
+        e = self.load_checkpoint(os.path.join(self.directory, f),
+                                 ignore_optim=ignore_optim)
         return f, e
       except Exception as e:
         print(e)
@@ -115,18 +119,22 @@ class Checkpointer(object):
 
   def periodic_checkpoint(self, epoch):
     now = time.time()
-    if self.interval <= 0 or (
+    if self.interval is None or (
       now - self.last_checkpoint_time < self.interval):
-      return
+      return False
     self.last_checkpoint_time = now
 
-    filename = 'periodic_{}.pth.tar'.format(time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime()))
+    filename = 'periodic_{}.pth.tar'.format(
+      time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime()))
     self.save_checkpoint(epoch, filename)
+
     if self.max_save > 0:
       if len(self.old_timed_files) >= self.max_save:
         self.delete_checkpoint(self.old_timed_files[0])
         self.old_timed_files = self.old_timed_files[1:]
       self.old_timed_files.append(filename)
+
+    return True
 
   def delete_checkpoint(self, filename):
     try:
@@ -175,6 +183,7 @@ class Checkpointer(object):
 
 
 class ExponentialMovingAverage(object):
+  """Keeps track of exponential moving averages, for each key."""
   def __init__(self, keys, alpha=0.999):
     self.first_update = {k: True for k in keys}
     self.alpha = alpha
@@ -192,6 +201,7 @@ class ExponentialMovingAverage(object):
 
 
 class Averager(object):
+  """Keeps track of running averages, for each key."""
   def __init__(self, keys):
     self.values = {k: 0.0 for k in keys}
     self.counts = {k: 0 for k in keys}
@@ -212,6 +222,12 @@ class Averager(object):
 
 
 class Timer(object):
+  """A simple named timer context.
+
+  Usage:
+    with Timer("header_name"):
+      do_sth()
+  """
   def __init__(self, header=""):
     self.header = header
     self.time = 0
@@ -222,6 +238,7 @@ class Timer(object):
   def __exit__(self, tpye, value, traceback):
     elapsed = (time.time()-self.time)*1000
     print("{}, {:.1f}ms".format(self.header, elapsed))
+
 
 def params2image(p):
   p = p.cpu().numpy()
