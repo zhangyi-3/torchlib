@@ -3,6 +3,7 @@ import torch as th
 from torch.autograd import Variable
 import numpy as np
 import time
+import csv
 
 log = logging.getLogger(__name__)
 
@@ -19,6 +20,28 @@ def make_variable(d, cuda=True, async=False, fp16=False):
     else:
       ret[k] = d[k]
   return ret
+
+class CSVLogger(object):
+  def __init__(self, directory, keys, filename="log.csv"):
+    if directory.startswith('~'):
+       directory = os.path.expanduser(directory)
+    os.makedirs(directory, exist_ok=True)
+    self.logfile = open(os.path.join(directory, filename), 'a')
+    self.writer = csv.DictWriter(self.logfile, keys)
+    # TODO: only write header once
+    # self.writer.writeheader()
+
+    # TODO: make sure filename is csv, add max entries and list
+
+  def __del__(self):
+    # graceful closing of file
+    if self.logfile:
+      self.logfile.close()
+
+  def log(self, **kwargs):
+    """Write a log entry from a dictionary"""
+    self.writer.writerow(kwargs)
+
 
 
 class Checkpointer(object):
@@ -90,34 +113,35 @@ class Checkpointer(object):
     all_checkpoints = Checkpointer.__get_sorted_checkpoints(self.directory)
 
     if len(all_checkpoints) == 0:
-      return None, 0
+      return None, 0, 0
 
     for f in all_checkpoints:
       try:
-        e = self.load_checkpoint(os.path.join(self.directory, f),
+        step, e = self.load_checkpoint(os.path.join(self.directory, f),
                                  ignore_optim=ignore_optim)
-        return f, e
+        return f, step, e
       except Exception as e:
         print(e)
         print("could not load latest checkpoint {}, moving on.".format(f))
-    return None, -1
+    return None, 0, 0
 
-  def save_checkpoint(self, epoch, filename):
+  def save_checkpoint(self, step, epoch, filename):
     if self.optimizer is not None:
       optimizer_state = self.optimizer.state_dict()
     else:
       optimizer_state = {}
     th.save({ 
-        'epoch': epoch + 1,
+        'step': step,
+        'epoch': epoch,
         'state_dict': self.model.state_dict(),
         'optimizer' : optimizer_state,
         'meta_params': self.meta_params,
         }, os.path.join(self.directory, filename))
 
-  def save_best(self, epoch):
-    self.save_checkpoint(epoch, 'best.pth.tar')
+  def save_best(self, step, epoch):
+    self.save_checkpoint(step, epoch, 'best.pth.tar')
 
-  def periodic_checkpoint(self, epoch):
+  def periodic_checkpoint(self, step, epoch):
     now = time.time()
     if self.interval is None or (
       now - self.last_checkpoint_time < self.interval):
@@ -126,7 +150,7 @@ class Checkpointer(object):
 
     filename = 'periodic_{}.pth.tar'.format(
       time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime()))
-    self.save_checkpoint(epoch, filename)
+    self.save_checkpoint(step, epoch, filename)
 
     if self.max_save > 0:
       if len(self.old_timed_files) >= self.max_save:
@@ -148,7 +172,7 @@ class Checkpointer(object):
     self.model.load_state_dict(chkpt["state_dict"])
     if self.optimizer is not None and not ignore_optim and chkpt["optimizer"]:
       self.optimizer.load_state_dict(chkpt["optimizer"])
-    return chkpt["epoch"]
+    return chkpt["step"], chkpt["epoch"]
 
   def on_epoch_end(self, epoch):
     filename = 'epoch_{:03d}.pth.tar'.format(epoch+1)

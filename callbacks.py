@@ -35,6 +35,7 @@ class LossCallback(Callback):
     if logs:
       self.viz.update(epoch, logs["loss"], name="val")
 
+
 class AccuracyCallback(Callback):
   def __init__(self, env=None):
     super(AccuracyCallback, self).__init__()
