@@ -33,6 +33,8 @@ class CSVLogger(object):
 
     # TODO: make sure filename is csv, add max entries and list
 
+    # TODO: add periodic flush, cycles thru multiple log files as write fill up
+
   def __del__(self):
     # graceful closing of file
     if self.logfile:
@@ -174,11 +176,11 @@ class Checkpointer(object):
       self.optimizer.load_state_dict(chkpt["optimizer"])
     return chkpt["step"], chkpt["epoch"]
 
-  def on_epoch_end(self, epoch):
+  def on_epoch_end(self, step, epoch):
     filename = 'epoch_{:03d}.pth.tar'.format(epoch+1)
     if self.verbose > 0:
       print('\nEpoch %i: saving model to %s' % (epoch+1, file))
-    self.save_checkpoint(epoch, filename)
+    self.save_checkpoint(step, epoch, filename)
     if self.max_save > 0:
       if len(self.old_epoch_files) >= self.max_save:
         self.delete_checkpoint(self.old_epoch_files[0])
