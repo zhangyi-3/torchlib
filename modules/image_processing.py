@@ -27,8 +27,9 @@ class MedianFilter(nn.Module):
 class ImageGradients(nn.Module):
   def __init__(self, c_in):
     super(ImageGradients, self).__init__()
-    self.dx = nn.Conv2d(c_in, c_in, [3, 3], padding=1, bias=False)
-    self.dy = nn.Conv2d(c_in, c_in, [3, 3], padding=1, bias=False)
+    self.dx = nn.Conv2d(c_in, c_in, [3, 3], padding=1, bias=False, groups=c_in)
+    self.dy = nn.Conv2d(c_in, c_in, [3, 3], padding=1, bias=False, groups=c_in)
+
 
     self.dx.weight.requires_grad = False
     self.dy.weight.requires_grad = False
